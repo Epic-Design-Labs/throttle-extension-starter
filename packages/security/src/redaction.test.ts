@@ -71,6 +71,40 @@ describe('structured redaction', () => {
     });
   });
 
+  it.each([new Uint16Array([1, 2]), new DataView(new ArrayBuffer(4))])(
+    'represents every ArrayBuffer view as binary',
+    (view) => {
+      expect(redact(view)).toBe('[Binary]');
+    },
+  );
+
+  it('clones arrays from own descriptors without invoking or inheriting getters', () => {
+    let calls = 0;
+    const input = new Array<unknown>(3);
+    Object.defineProperty(input, '0', {
+      enumerable: true,
+      get: () => {
+        calls += 1;
+        return 'leak';
+      },
+    });
+    Object.defineProperty(input, '2', { enumerable: true, value: 'safe' });
+    Object.setPrototypeOf(input, {
+      get 1() {
+        calls += 1;
+        return 'inherited leak';
+      },
+    });
+
+    const result = redact(input) as unknown[];
+
+    expect(calls).toBe(0);
+    expect(result).toHaveLength(3);
+    expect(result[0]).toBe('[Getter]');
+    expect(Object.hasOwn(result, 1)).toBe(false);
+    expect(result[2]).toBe('safe');
+  });
+
   it('does not invoke getters or toJSON and excludes symbols and non-enumerable values', () => {
     let calls = 0;
     const input = Object.defineProperties(
@@ -98,6 +132,19 @@ describe('structured redaction', () => {
       toJSON: '[Function]',
       getter: '[Getter]',
     });
+    expect(calls).toBe(0);
+  });
+
+  it('serializes dates without invoking overridden properties', () => {
+    let calls = 0;
+    const date = new Date('2024-01-02T03:04:05.000Z');
+    Object.defineProperty(date, 'getTime', {
+      get: () => {
+        calls += 1;
+        return () => 0;
+      },
+    });
+    expect(redact(date)).toBe('2024-01-02T03:04:05.000Z');
     expect(calls).toBe(0);
   });
 

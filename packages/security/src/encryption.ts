@@ -16,9 +16,22 @@ const ENVELOPE_FIELDS = [
   'iv',
   'keyVersion',
 ] as const;
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(
+  Uint8Array.prototype,
+) as object;
+const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteLength',
+)!.get!;
 
-const copyBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> =>
-  new Uint8Array(bytes);
+const byteLength = (bytes: Uint8Array): number =>
+  TYPED_ARRAY_BYTE_LENGTH.call(bytes) as number;
+
+const copyBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => {
+  const copy = new Uint8Array(byteLength(bytes));
+  Uint8Array.prototype.set.call(copy, bytes);
+  return copy;
+};
 
 const encodeBase64Url = (bytes: Uint8Array): string => {
   let binary = '';
@@ -49,11 +62,18 @@ const decodeBase64Url = (encoded: unknown): Uint8Array<ArrayBuffer> => {
 const validateRootKey = (rootKey: Uint8Array): Uint8Array<ArrayBuffer> => {
   if (
     !(rootKey instanceof Uint8Array) ||
-    rootKey.byteLength !== ROOT_KEY_LENGTH
+    byteLength(rootKey) !== ROOT_KEY_LENGTH
   ) {
     throw new Error('Root key must be exactly 32 bytes');
   }
   return copyBytes(rootKey);
+};
+
+const validatePlaintext = (plaintext: Uint8Array): Uint8Array<ArrayBuffer> => {
+  if (!(plaintext instanceof Uint8Array)) {
+    throw new Error('Plaintext must be a Uint8Array');
+  }
+  return copyBytes(plaintext);
 };
 
 const validateContext = (installationId: string): Uint8Array<ArrayBuffer> => {
@@ -88,12 +108,13 @@ export async function encryptSecret(
   validateKeyVersion(keyVersion);
   const keyBytes = validateRootKey(rootKey);
   const additionalData = validateContext(installationId);
+  const plaintextBytes = validatePlaintext(plaintext);
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const key = await importKey(keyBytes);
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData },
     key,
-    copyBytes(plaintext),
+    plaintextBytes,
   );
   return {
     algorithm: ALGORITHM,
@@ -117,15 +138,25 @@ export async function decryptSecret(
     ) {
       throw new Error(DECRYPTION_ERROR);
     }
-    const descriptors = Object.getOwnPropertyDescriptors(envelope);
-    const fields = Object.entries(descriptors)
-      .filter(([, descriptor]) => descriptor.enumerable)
-      .map(([field]) => field)
+    const ownKeys = Reflect.ownKeys(envelope);
+    const fields = ownKeys
+      .filter((field): field is string => typeof field === 'string')
       .sort();
     if (
+      ownKeys.length !== ENVELOPE_FIELDS.length ||
       fields.length !== ENVELOPE_FIELDS.length ||
-      fields.some((field, index) => field !== ENVELOPE_FIELDS[index]) ||
-      ENVELOPE_FIELDS.some((field) => !('value' in descriptors[field]!))
+      fields.some((field, index) => field !== ENVELOPE_FIELDS[index])
+    ) {
+      throw new Error(DECRYPTION_ERROR);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(envelope);
+    if (
+      ENVELOPE_FIELDS.some((field) => {
+        const descriptor = descriptors[field];
+        return (
+          !descriptor || !descriptor.enumerable || !('value' in descriptor)
+        );
+      })
     ) {
       throw new Error(DECRYPTION_ERROR);
     }

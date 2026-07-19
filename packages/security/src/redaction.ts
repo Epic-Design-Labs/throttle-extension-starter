@@ -45,10 +45,10 @@ const cloneForLogging = (
   if (typeof value === 'undefined') return undefined;
   if (typeof value === 'function') return '[Function]';
   if (typeof value === 'symbol') return undefined;
-  if (value instanceof Uint8Array || value instanceof ArrayBuffer)
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer)
     return '[Binary]';
   if (value instanceof Date) {
-    const timestamp = value.getTime();
+    const timestamp = Date.prototype.getTime.call(value) as number;
     return Number.isNaN(timestamp)
       ? '[Invalid Date]'
       : new Date(timestamp).toISOString();
@@ -60,7 +60,29 @@ const cloneForLogging = (
 
   ancestors.add(value);
   if (Array.isArray(value)) {
-    const result = value.map((item) => cloneForLogging(item, ancestors));
+    const descriptors = Object.getOwnPropertyDescriptors(value) as Record<
+      string,
+      PropertyDescriptor
+    >;
+    const lengthDescriptor = descriptors.length;
+    const length =
+      lengthDescriptor && 'value' in lengthDescriptor
+        ? (lengthDescriptor.value as number)
+        : 0;
+    const result = new Array<unknown>(length);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (key === 'length' || !descriptor.enumerable) continue;
+      const sanitized =
+        'value' in descriptor
+          ? cloneForLogging(descriptor.value, ancestors)
+          : '[Getter]';
+      Object.defineProperty(result, key, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: sanitized,
+      });
+    }
     ancestors.delete(value);
     return result;
   }

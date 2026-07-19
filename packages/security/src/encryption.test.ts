@@ -108,6 +108,56 @@ describe('secret encryption', () => {
     ).rejects.toThrow('Unable to decrypt secret');
   });
 
+  it.each(['hidden', 'symbol', 'accessor'] as const)(
+    'rejects an envelope containing an extra %s own key without invoking accessors',
+    async (kind) => {
+      let calls = 0;
+      const key = validKey();
+      const envelope: object = await encryptSecret(
+        encoder.encode('secret'),
+        key,
+        'inst_1',
+      );
+      if (kind === 'hidden') {
+        Object.defineProperty(envelope, 'hidden', { value: 'leak' });
+      } else if (kind === 'symbol') {
+        Object.defineProperty(envelope, Symbol('leak'), { value: 'leak' });
+      } else {
+        Object.defineProperty(envelope, 'extra', {
+          get: () => {
+            calls += 1;
+            return 'leak';
+          },
+        });
+      }
+      await expect(decryptSecret(envelope, key, 'inst_1')).rejects.toThrow(
+        'Unable to decrypt secret',
+      );
+      expect(calls).toBe(0);
+    },
+  );
+
+  it('rejects an accessor for a required envelope field without invoking it', async () => {
+    let calls = 0;
+    const key = validKey();
+    const envelope = await encryptSecret(
+      encoder.encode('secret'),
+      key,
+      'inst_1',
+    );
+    Object.defineProperty(envelope, 'ciphertext', {
+      enumerable: true,
+      get: () => {
+        calls += 1;
+        return 'leak';
+      },
+    });
+    await expect(decryptSecret(envelope, key, 'inst_1')).rejects.toThrow(
+      'Unable to decrypt secret',
+    );
+    expect(calls).toBe(0);
+  });
+
   it.each([
     new Uint8Array(0),
     new Uint8Array(16),
@@ -135,6 +185,49 @@ describe('secret encryption', () => {
     await expect(
       encryptSecret(encoder.encode('secret'), validKey(), ''),
     ).rejects.toThrow('installation');
+  });
+
+  it.each([null, [], 1, new ArrayBuffer(2)])(
+    'rejects non-Uint8Array plaintext input: %o',
+    async (plaintext) => {
+      await expect(
+        encryptSecret(plaintext as unknown as Uint8Array, validKey(), 'inst_1'),
+      ).rejects.toThrow('Uint8Array');
+    },
+  );
+
+  it('validates Uint8Array keys without invoking overridden properties', async () => {
+    let calls = 0;
+    const key = validKey();
+    Object.defineProperties(key, {
+      byteLength: {
+        get: () => {
+          calls += 1;
+          return 0;
+        },
+      },
+      slice: {
+        value: () => {
+          calls += 1;
+          return new Uint8Array();
+        },
+      },
+      constructor: {
+        get: () => {
+          calls += 1;
+          return Uint8Array;
+        },
+      },
+    });
+    const envelope = await encryptSecret(
+      encoder.encode('secret'),
+      key,
+      'inst_1',
+    );
+    await expect(decryptSecret(envelope, key, 'inst_1')).resolves.toEqual(
+      encoder.encode('secret'),
+    );
+    expect(calls).toBe(0);
   });
 
   it.each([new Uint8Array(), new Uint8Array([0, 255, 1, 128])])(
