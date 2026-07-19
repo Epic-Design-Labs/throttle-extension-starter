@@ -14,18 +14,26 @@ export class D1JobExecutionStore implements JobExecutionStore {
     const lease = new Date(input.now.valueOf() + LEASE_MS).toISOString();
     const row = await this.db
       .prepare(
-        "UPDATE jobs SET status='processing', attempt=?, updated_at=?, lease_expires_at=? WHERE job_id=? AND (status IN ('pending','retry') OR (status='processing' AND lease_expires_at <= ?)) RETURNING job_id",
+        "UPDATE jobs SET status='processing', attempt=?, updated_at=?, lease_expires_at=? WHERE job_id=? AND ((status IN ('pending','retry') AND ?=attempt+1) OR (status='processing' AND lease_expires_at <= ? AND ?=attempt)) RETURNING job_id",
       )
-      .bind(input.attempt, now, lease, requireText(input.jobId, 'jobId'), now)
+      .bind(
+        input.attempt,
+        now,
+        lease,
+        requireText(input.jobId, 'jobId'),
+        input.attempt,
+        now,
+        input.attempt,
+      )
       .first();
     if (row !== null) return 'claimed';
     const existing = await this.db
-      .prepare('SELECT status FROM jobs WHERE job_id=?')
+      .prepare('SELECT status, attempt FROM jobs WHERE job_id=?')
       .bind(input.jobId)
-      .first<{ status: string }>();
-    return existing?.status === 'processing' || existing?.status === 'completed'
-      ? 'duplicate'
-      : 'unavailable';
+      .first<{ status: string; attempt: number }>();
+    if (existing !== null && input.attempt <= existing.attempt)
+      return 'duplicate';
+    return 'unavailable';
   }
   async finish(input: {
     jobId: string;

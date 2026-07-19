@@ -201,6 +201,123 @@ describe('D1 schema', () => {
     ).toBe('duplicate');
   });
 
+  test('advances retry attempts exactly once and rejects stale or skipped attempts', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'progress-workspace',
+      applicationId: 'progress-app',
+      environmentId: 'progress-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'progress-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const at = '2026-07-19T10:00:00.000Z';
+    await database
+      .prepare(
+        'INSERT INTO jobs (job_id, installation_id, payload_reference, attempt, status, scheduled_at, created_at, updated_at, lease_expires_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, NULL)',
+      )
+      .bind(
+        'progress-job',
+        'progress-installation',
+        'ref',
+        'pending',
+        at,
+        at,
+        at,
+      )
+      .run();
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toBe('claimed');
+    await adapters.executions.finish({
+      jobId: 'progress-job',
+      attempt: 1,
+      status: 'retry',
+      now: new Date(at),
+    });
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toBe('duplicate');
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        attempt: 3,
+        now: new Date(at),
+      }),
+    ).toBe('unavailable');
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        attempt: 2,
+        now: new Date(at),
+      }),
+    ).toBe('claimed');
+  });
+
+  test('reclaims only the same attempt after its processing lease expires', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'lease-workspace',
+      applicationId: 'lease-app',
+      environmentId: 'lease-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'lease-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const at = '2026-07-19T10:00:00.000Z';
+    await database
+      .prepare(
+        'INSERT INTO jobs (job_id, installation_id, payload_reference, attempt, status, scheduled_at, created_at, updated_at, lease_expires_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, NULL)',
+      )
+      .bind('lease-job', 'lease-installation', 'ref', 'pending', at, at, at)
+      .run();
+    expect(
+      await adapters.executions.claim({
+        jobId: 'lease-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toBe('claimed');
+    await database
+      .prepare('UPDATE jobs SET lease_expires_at=? WHERE job_id=?')
+      .bind('2026-07-19T09:59:00.000Z', 'lease-job')
+      .run();
+    expect(
+      await adapters.executions.claim({
+        jobId: 'lease-job',
+        attempt: 2,
+        now: new Date(at),
+      }),
+    ).toBe('unavailable');
+    expect(
+      await adapters.executions.claim({
+        jobId: 'lease-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toBe('claimed');
+  });
+
   test('provider connection commit rolls back account metadata when secret persistence fails', async () => {
     const adapters = createD1Adapters({ database, credentialKeys: keyring });
     const scope = {
@@ -245,6 +362,39 @@ describe('D1 schema', () => {
         'providerCredentials',
       ),
     ).toBeUndefined();
+  });
+
+  test('provider connection result preserves existing sync cursor and immutable identity', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'cursor-workspace',
+      applicationId: 'cursor-app',
+      environmentId: 'cursor-env',
+    };
+    const original = {
+      installationId: 'cursor-installation',
+      ...scope,
+      environmentKind: 'non_production' as const,
+      extensionVersion: '1',
+      status: 'active' as const,
+      lastSuccessfulSyncCursor: 'cursor-17',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    };
+    await adapters.installations.upsert(original);
+    const connected = await adapters.connections.commit({
+      installationId: original.installationId,
+      scope,
+      credentials: new TextEncoder().encode('secret'),
+      providerAccountReference: 'account',
+      now: new Date('2026-07-19T11:00:00.000Z'),
+    });
+    expect(connected.lastSuccessfulSyncCursor).toBe('cursor-17');
+    expect(connected.workspaceId).toBe(original.workspaceId);
+    expect(
+      (await adapters.installations.get(original.installationId, scope))
+        ?.lastSuccessfulSyncCursor,
+    ).toBe('cursor-17');
   });
 
   test('concurrent provider connection commits never mix account and credential', async () => {

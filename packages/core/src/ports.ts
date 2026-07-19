@@ -62,6 +62,11 @@ export interface CredentialStore {
 
 export type JobClaimResult = 'claimed' | 'duplicate' | 'unavailable';
 export interface JobExecutionStore {
+  /**
+   * Pending/retry jobs claim only stored attempt + 1. An expired processing
+   * lease reclaims only its stored attempt. Same/stale attempts are duplicate;
+   * skipped/future attempts are unavailable.
+   */
   claim(input: {
     jobId: string;
     attempt: number;

@@ -77,8 +77,14 @@ export class D1ProviderConnectionStore implements ProviderConnectionStore {
         extensionVersion: row?.extension_version,
         providerAccountReference: row?.provider_account_reference,
         status: row?.status,
+        ...(row?.last_successful_sync_cursor == null
+          ? {}
+          : { lastSuccessfulSyncCursor: row.last_successful_sync_cursor }),
         createdAt: row?.created_at,
         updatedAt: row?.updated_at,
+        ...(row?.uninstalled_at == null
+          ? {}
+          : { uninstalledAt: row.uninstalled_at }),
       });
     } finally {
       owned.fill(0);
