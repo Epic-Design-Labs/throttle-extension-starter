@@ -76,8 +76,13 @@ beforeAll(async () => {
     new URL('../migrations/0002_configurations.sql', import.meta.url),
     'utf8',
   );
+  const dispatchMigration = await readFile(
+    new URL('../migrations/0003_queue_dispatch.sql', import.meta.url),
+    'utf8',
+  );
   await applyMigration(initialMigration);
   await applyMigration(configurationMigration);
+  await applyMigration(dispatchMigration);
 });
 afterAll(async () => runtime.dispose());
 
@@ -251,8 +256,15 @@ test('activity id collision rolls back rotated secrets', async () => {
 
 test('atomically persists a deterministic accepted job and makes duplicate retry safe', async () => {
   const store = new D1WebhookAcceptanceStore(database);
-  expect(await store.accept(job)).toEqual({ accepted: true });
-  expect(await store.accept(job)).toEqual({ accepted: false });
+  expect(await store.accept(job)).toEqual({
+    accepted: true,
+    enqueueRequired: true,
+  });
+  await store.markEnqueued(job.jobId, new Date(job.createdAt));
+  expect(await store.accept(job)).toEqual({
+    accepted: false,
+    enqueueRequired: false,
+  });
   expect(
     await database
       .prepare('SELECT count(*) AS count FROM jobs WHERE job_id=?')

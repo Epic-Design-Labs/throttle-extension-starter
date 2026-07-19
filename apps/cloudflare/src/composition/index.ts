@@ -12,7 +12,9 @@ import {
 import {
   connectProvider,
   processConnectorEvent,
+  type Clock,
   type Logger,
+  type ProviderConnector,
 } from '@starter/core';
 import { createDemoProvider } from '@starter/demo-connector';
 import { redact } from '@starter/security';
@@ -25,7 +27,7 @@ import type { Env } from '../env.js';
 import { validateEnv } from '../env.js';
 import { HttpError } from '../middleware/errors.js';
 
-const clock = { now: () => new Date() };
+const systemClock = { now: () => new Date() };
 const verifierCache = new Map<string, ExtensionIdentityVerifier>();
 const MAX_VERIFIER_CONFIGURATIONS = 8;
 
@@ -95,20 +97,32 @@ export function mapBootstrapError(
   );
 }
 
-export function composeWorker(rawEnv: Env) {
+export interface WorkerCompositionOverrides {
+  clock?: Clock;
+  connector?: ProviderConnector;
+  identityVerifier?: ExtensionIdentityVerifier;
+}
+
+export function composeWorker(
+  rawEnv: Env,
+  overrides: WorkerCompositionOverrides = {},
+) {
   const env = validateEnv(rawEnv);
+  const clock = overrides.clock ?? systemClock;
   const adapters = createD1Adapters({
     database: env.database,
     credentialKeys: env.keyring,
     idGenerator: { next: () => crypto.randomUUID() },
   });
-  const connector = createDemoProvider();
+  const connector = overrides.connector ?? createDemoProvider();
   const safeLogger = logger();
   const queueProducer = createCloudflareQueueProducer(env.queue);
-  const identityVerifier = getCachedIdentityVerifier({
-    extensionId: env.extensionId,
-    jwksUrl: env.jwksUrl,
-  });
+  const identityVerifier =
+    overrides.identityVerifier ??
+    getCachedIdentityVerifier({
+      extensionId: env.extensionId,
+      jwksUrl: env.jwksUrl,
+    });
   const app = createApp({
     dashboardOrigin: env.dashboardOrigin,
     authorizationScopes: env.authorizationScopes,
@@ -155,6 +169,8 @@ export function composeWorker(rawEnv: Env) {
       }
     },
     acceptJob: (job) => adapters.webhookAcceptance.accept(job),
+    markJobEnqueued: (jobId, publishedAt) =>
+      adapters.webhookAcceptance.markEnqueued(jobId, publishedAt),
     queue: queueProducer,
     connect: ({ identity, credentials }) =>
       connectProvider(

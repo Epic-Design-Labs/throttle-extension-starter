@@ -93,10 +93,14 @@ export function registerWebhookRoutes(
         createdAt: verified.event.createdAt,
       };
       try {
-        await dependencies.acceptJob(job);
-        // Deliberately send for both newly accepted and duplicate deliveries.
-        // A prior database commit may have survived a failed Queue send.
-        await dependencies.queue.enqueue(job);
+        const acceptance = await dependencies.acceptJob(job);
+        if (acceptance.enqueueRequired) {
+          await dependencies.queue.enqueue(job);
+          await dependencies.markJobEnqueued(
+            job.jobId,
+            dependencies.clock.now(),
+          );
+        }
       } catch {
         throw new HttpError(
           503,

@@ -62,7 +62,8 @@ function fixture(overrides: Partial<AppDependencies> = {}) {
     },
     credentials: { get: vi.fn(async () => undefined) },
     bootstrap: vi.fn(async () => installation),
-    acceptJob: vi.fn(async () => ({ accepted: true })),
+    acceptJob: vi.fn(async () => ({ accepted: true, enqueueRequired: true })),
+    markJobEnqueued: vi.fn(async () => undefined),
     queue: { enqueue: vi.fn(async () => undefined) },
     connect: vi.fn(async () => installation),
     activities: { list: vi.fn(async () => []) },
@@ -526,8 +527,8 @@ describe('Throttle webhook ingress', () => {
       },
       acceptJob: vi
         .fn()
-        .mockResolvedValueOnce({ accepted: true })
-        .mockResolvedValueOnce({ accepted: false }),
+        .mockResolvedValueOnce({ accepted: true, enqueueRequired: true })
+        .mockResolvedValueOnce({ accepted: false, enqueueRequired: false }),
     });
     for (let index = 0; index < 2; index++) {
       const response = await app.request('/webhooks/throttle', {
@@ -543,10 +544,9 @@ describe('Throttle webhook ingress', () => {
       expect(response.status).toBe(202);
     }
     const firstJob = vi.mocked(deps.queue.enqueue).mock.calls[0]![0];
-    const secondJob = vi.mocked(deps.queue.enqueue).mock.calls[1]![0];
-    expect(firstJob).toEqual(secondJob);
     expect(firstJob.jobId).toBe(JSON.stringify(['install-1', 'event-1']));
-    expect(deps.queue.enqueue).toHaveBeenCalledTimes(2);
+    expect(deps.queue.enqueue).toHaveBeenCalledTimes(1);
+    expect(deps.markJobEnqueued).toHaveBeenCalledTimes(1);
     for (const returnedSecret of returnedSecrets)
       expect([...returnedSecret]).toEqual(
         new Array(returnedSecret.length).fill(0),
@@ -571,7 +571,10 @@ describe('Throttle webhook ingress', () => {
       credentials: {
         get: vi.fn(async () => new TextEncoder().encode(secret)),
       },
-      acceptJob: vi.fn(async () => ({ accepted: false })),
+      acceptJob: vi.fn(async () => ({
+        accepted: false,
+        enqueueRequired: true,
+      })),
       queue: { enqueue },
     });
     const request = () =>
@@ -590,6 +593,7 @@ describe('Throttle webhook ingress', () => {
     expect(enqueue.mock.calls[0]![0]).toEqual(enqueue.mock.calls[1]![0]);
     expect(JSON.stringify(log.mock.calls)).not.toContain('queue secret detail');
     expect(deps.acceptJob).toHaveBeenCalledTimes(2);
+    expect(deps.markJobEnqueued).toHaveBeenCalledTimes(1);
   });
 
   test('fails closed on an invalid signature and wipes candidate secret buffers', async () => {

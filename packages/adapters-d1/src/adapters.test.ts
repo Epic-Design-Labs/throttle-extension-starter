@@ -72,8 +72,13 @@ beforeAll(async () => {
     new URL('../migrations/0002_configurations.sql', import.meta.url),
     'utf8',
   );
+  const dispatchMigration = await readFile(
+    new URL('../migrations/0003_queue_dispatch.sql', import.meta.url),
+    'utf8',
+  );
   await applyMigration(database, initialMigration);
   await applyMigration(database, configurationMigration);
+  await applyMigration(database, dispatchMigration);
 });
 
 runPersistenceAdapterContract({

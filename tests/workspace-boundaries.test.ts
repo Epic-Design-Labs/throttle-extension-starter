@@ -24,7 +24,7 @@ function importSpecifiers(source: string): string[] {
       ts.isCallExpression(node) &&
       node.expression.kind === ts.SyntaxKind.ImportKeyword &&
       node.arguments.length === 1 &&
-      ts.isStringLiteral(node.arguments[0])
+      ts.isStringLiteral(node.arguments[0]!)
     ) {
       specifiers.push(node.arguments[0].text);
     }
@@ -90,4 +90,23 @@ describe('portable package boundaries', () => {
       }
     },
   );
+
+  it('isolates runtime globals and typechecks root tests with Node 20 types', async () => {
+    const [base, rootPackage, testsConfig] = await Promise.all([
+      readFile('tsconfig.base.json', 'utf8'),
+      readFile('package.json', 'utf8'),
+      readFile('tsconfig.tests.json', 'utf8'),
+    ]);
+    expect(JSON.parse(base)).toMatchObject({ compilerOptions: { types: [] } });
+    expect(JSON.parse(rootPackage)).toMatchObject({
+      scripts: {
+        test: expect.stringContaining('vitest run --config'),
+        typecheck: expect.stringContaining('tsconfig.tests.json'),
+      },
+      devDependencies: { '@types/node': expect.stringMatching(/^20\./u) },
+    });
+    expect(JSON.parse(testsConfig)).toMatchObject({
+      compilerOptions: { types: ['node', 'vitest/globals'] },
+    });
+  });
 });

@@ -2,6 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["@cloudflare/workers-types", "vitest/globals"],
+    "paths": {
+      "@starter/adapters-d1": ["../../packages/adapters-d1/src/index.ts"]
+    },
     "noEmit": true
   },
   "include": ["src/**/*.ts"]

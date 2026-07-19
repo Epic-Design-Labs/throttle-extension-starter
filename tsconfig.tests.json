@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@starter/adapters-d1": ["./packages/adapters-d1/src/index.ts"]
+    }
+  },
+  "include": ["tests/**/*.ts", "vitest.root.config.ts"],
+  "exclude": ["**/dist/**", "node_modules"]
+}

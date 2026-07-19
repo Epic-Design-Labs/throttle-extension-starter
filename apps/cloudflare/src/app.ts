@@ -52,7 +52,10 @@ export interface AppDependencies {
     webhookSigningSecret: Uint8Array;
     replace: boolean;
   }): Promise<Installation>;
-  acceptJob(job: ConnectorJob): Promise<{ accepted: boolean }>;
+  acceptJob(
+    job: ConnectorJob,
+  ): Promise<{ accepted: boolean; enqueueRequired: boolean }>;
+  markJobEnqueued(jobId: string, publishedAt: Date): Promise<void>;
   queue: { enqueue(job: ConnectorJob): Promise<void> };
   connect(input: {
     identity: VerifiedExtensionIdentity;

@@ -1,31 +1,24 @@
 import { readFile } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
-import type {
-  Activity,
-  ThrottleEvent,
+import {
+  activitySchema,
+  type Activity,
+  type ThrottleEvent,
 } from '../../packages/contracts/src/index.js';
-import {
-  createD1Adapters,
-  InstallationBootstrapError,
-  type D1Database,
-} from '../../packages/adapters-d1/src/index.js';
-import {
-  consumeConnectorQueue,
-  createActivityStoreQueueFailureRecorder,
-  createCloudflareQueueProducer,
-  type CloudflareQueue,
-  type CloudflareQueueMessage,
-  type ConnectorQueuePayload,
+import type { D1Database } from '../../packages/adapters-d1/src/index.js';
+import type {
+  CloudflareQueue,
+  CloudflareQueueMessage,
+  ConnectorQueuePayload,
 } from '../../packages/adapters-cloudflare-queue/src/index.js';
-import {
-  connectProvider,
-  processConnectorEvent,
-  type Logger,
-} from '../../packages/core/src/index.js';
+import type { ProviderConnector } from '../../packages/core/src/index.js';
 import { createDemoProvider } from '../../examples/demo-connector/src/index.js';
 import { createExtensionIdentityVerifier } from '../../packages/throttle/src/index.js';
-import { createApp } from '../../apps/cloudflare/src/app.js';
-import { mapBootstrapError } from '../../apps/cloudflare/src/composition/index.js';
+import {
+  composeWorker,
+  type WorkerCompositionOverrides,
+} from '../../apps/cloudflare/src/composition/index.js';
+import type { Env } from '../../apps/cloudflare/src/env.js';
 import { signWebhook } from './sign-webhook.js';
 
 const EXTENSION_ID = 'extension-demo';
@@ -35,7 +28,7 @@ const DASHBOARD_ORIGIN = 'https://dashboard.usethrottle.dev';
 const encoder = new TextEncoder();
 
 type IdentityOverrides = { installationId?: string };
-type JobRow = { status: string; attempt: number };
+type JobRow = { status: string; attempt: number; scheduledAt: string };
 type QueueItem = {
   id: string;
   body: ConnectorQueuePayload;
@@ -60,9 +53,10 @@ class InProcessQueue implements CloudflareQueue {
   constructor(private readonly clock: TestClock) {}
 
   async send(body: ConnectorQueuePayload): Promise<void> {
-    const id = `message-${String(++this.sequence)}`;
-    this.items.set(id, {
-      id,
+    const key = body.job.jobId;
+    if (this.items.has(key)) return;
+    this.items.set(key, {
+      id: `message-${String(++this.sequence)}`,
       body: structuredClone(body),
       attempts: 1,
       readyAt: this.clock.now().valueOf(),
@@ -76,11 +70,11 @@ class InProcessQueue implements CloudflareQueue {
   async drain(
     consume: (message: CloudflareQueueMessage) => Promise<void>,
   ): Promise<void> {
-    const readyIds = [...this.items.values()]
-      .filter((item) => item.readyAt <= this.clock.now().valueOf())
-      .map((item) => item.id);
-    for (const id of readyIds) {
-      const item = this.items.get(id);
+    const readyKeys = [...this.items.entries()]
+      .filter(([, item]) => item.readyAt <= this.clock.now().valueOf())
+      .map(([key]) => key);
+    for (const key of readyKeys) {
+      const item = this.items.get(key);
       if (!item) continue;
       let settled = false;
       await consume({
@@ -90,7 +84,7 @@ class InProcessQueue implements CloudflareQueue {
         ack: () => {
           if (settled) throw new Error('Queue message settled twice');
           settled = true;
-          this.items.delete(id);
+          this.items.delete(key);
         },
         retry: ({ delaySeconds }) => {
           if (settled) throw new Error('Queue message settled twice');
@@ -182,6 +176,7 @@ async function applyMigrations(database: D1Database): Promise<void> {
   for (const relative of [
     '../../packages/adapters-d1/migrations/0001_initial.sql',
     '../../packages/adapters-d1/migrations/0002_configurations.sql',
+    '../../packages/adapters-d1/migrations/0003_queue_dispatch.sql',
   ]) {
     const migration = await readFile(
       new URL(relative, import.meta.url),
@@ -208,12 +203,21 @@ async function applyMigrations(database: D1Database): Promise<void> {
   }
 }
 
-const logger: Logger = {
-  debug: () => undefined,
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
-};
+function mapActivity(row: Record<string, unknown>): Activity {
+  return activitySchema.parse({
+    activityId: row.activity_id,
+    installationId: row.installation_id,
+    ...(row.event_id == null ? {} : { eventId: row.event_id }),
+    ...(row.job_id == null ? {} : { jobId: row.job_id }),
+    type: row.type,
+    status: row.status,
+    result: row.result,
+    attempt: row.attempt,
+    ...(row.message == null ? {} : { message: row.message }),
+    ...(row.code == null ? {} : { code: row.code }),
+    createdAt: row.created_at,
+  });
+}
 
 export interface TestSystem {
   bootstrap(): Promise<Response>;
@@ -230,9 +234,13 @@ export interface TestSystem {
   ): Promise<Response>;
   readActivities(response: Response): Promise<Activity[]>;
   activitiesFromApi(): Promise<Activity[]>;
+  eventActivities(eventId: string): Promise<Activity[]>;
+  connectorActivityCount(eventId: string): Promise<number>;
   drainReadyQueue(): Promise<void>;
   advanceSeconds(seconds: number): void;
+  nowPlusSeconds(seconds: number): string;
   queuedCount(): number;
+  providerAttemptCount(): number;
   jobCount(): Promise<number>;
   jobState(eventId: string): Promise<JobRow | null>;
   providerOrders(): string[];
@@ -249,127 +257,45 @@ export async function createTestSystem(): Promise<TestSystem> {
   await applyMigrations(database);
   const clock = new TestClock();
   const identity = await createIdentity(clock);
-  const queue = new InProcessQueue(clock);
-  const key = new Uint8Array(32).fill(23);
-  const adapters = createD1Adapters({
-    database,
-    credentialKeys: {
-      current: () => ({ version: 1, key }),
-      resolve: (version) => (version === 1 ? key : undefined),
-    },
-    idGenerator: { next: () => crypto.randomUUID() },
-  });
+  const queueBinding = new InProcessQueue(clock);
   const orders: string[] = [];
-  const connector = createDemoProvider({
+  let providerAttempts = 0;
+  const demo = createDemoProvider({
     sink: {
       async recordOrderCreated(orderId) {
         orders.push(orderId);
       },
     },
   });
-  const queueProducer = createCloudflareQueueProducer(queue);
-  const app = createApp({
-    dashboardOrigin: DASHBOARD_ORIGIN,
-    authorizationScopes: {
-      read: 'connector:read',
-      mutation: 'connector:write',
+  const connector: ProviderConnector = {
+    validateCredentials: (credentials) => demo.validateCredentials(credentials),
+    async handleEvent(input) {
+      providerAttempts += 1;
+      return demo.handleEvent(input);
     },
+  };
+  const key = new Uint8Array(32).fill(23);
+  const env: Env = {
+    DB: database,
+    CONNECTOR_QUEUE: queueBinding,
+    ENCRYPTION_KEY: base64url(key),
+    ENCRYPTION_KEY_VERSION: '1',
+    ENCRYPTION_KEYRING: '{}',
+    THROTTLE_DASHBOARD_ORIGIN: DASHBOARD_ORIGIN,
+    THROTTLE_JWKS_URL: 'https://identity.example/jwks.json',
+    THROTTLE_EXTENSION_ID: EXTENSION_ID,
+    THROTTLE_READ_SCOPE: 'connector:read',
+    THROTTLE_MUTATION_SCOPE: 'connector:write',
+    QUEUE_MAX_ATTEMPTS: '5',
+  };
+  const overrides: WorkerCompositionOverrides = {
     clock,
-    encodeProviderCredentials: (value) => encoder.encode(value),
-    createRequestId: () => crypto.randomUUID(),
+    connector,
     identityVerifier: identity.verifier,
-    readiness: async () => true,
-    installations: adapters.installations,
-    credentials: adapters.credentials,
-    bootstrap: async ({
-      identity: verified,
-      throttleApiKey,
-      webhookSigningSecret,
-      replace,
-    }) => {
-      const at = clock.now().toISOString();
-      try {
-        return await adapters.bootstrap.commit({
-          installation: {
-            installationId: verified.installationId,
-            workspaceId: verified.workspaceId,
-            applicationId: verified.applicationId,
-            environmentId: verified.environmentId,
-            environmentKind: verified.environmentKind,
-            extensionVersion: verified.version,
-            status: 'active',
-            createdAt: at,
-            updatedAt: at,
-          },
-          throttleApiKey,
-          webhookSigningSecret,
-          replace,
-          actorId: verified.userId,
-        });
-      } catch (error) {
-        if (!(error instanceof InstallationBootstrapError)) throw error;
-        throw mapBootstrapError(error);
-      }
-    },
-    acceptJob: (job) => adapters.webhookAcceptance.accept(job),
-    queue: queueProducer,
-    connect: ({ identity: verified, credentials }) =>
-      connectProvider(
-        {
-          installationId: verified.installationId,
-          scope: {
-            workspaceId: verified.workspaceId,
-            applicationId: verified.applicationId,
-            environmentId: verified.environmentId,
-          },
-          credentials,
-        },
-        {
-          installations: adapters.installations,
-          connections: adapters.connections,
-          activities: adapters.activities,
-          connector,
-          clock,
-          logger,
-        },
-      ),
-    activities: adapters.activities,
-    configurations: adapters.configurations,
-    uninstall: ({ identity: verified }) =>
-      adapters.installations.markUninstalled(
-        verified.installationId,
-        {
-          workspaceId: verified.workspaceId,
-          applicationId: verified.applicationId,
-          environmentId: verified.environmentId,
-        },
-        clock.now(),
-      ),
-    logger,
-  });
+  };
+  const worker = composeWorker(env, overrides);
   const consumeOne = (message: CloudflareQueueMessage) =>
-    consumeConnectorQueue(
-      { messages: [message] },
-      {
-        processConnectorEvent: (job) =>
-          processConnectorEvent(job, {
-            installations: adapters.installations,
-            credentials: adapters.credentials,
-            configurations: adapters.configurations,
-            activities: adapters.activities,
-            executions: adapters.executions,
-            connector,
-            clock,
-            logger,
-          }),
-        logger,
-        recordFailure: createActivityStoreQueueFailureRecorder({
-          activities: adapters.activities,
-          clock,
-        }),
-        maxDeliveryAttempts: 5,
-      },
-    );
+    worker.queue({ messages: [message] });
 
   async function fetch(
     path: string,
@@ -377,7 +303,7 @@ export async function createTestSystem(): Promise<TestSystem> {
     overrides: IdentityOverrides = {},
   ): Promise<Response> {
     const token = await identity.issue(overrides);
-    return app.request(`https://worker.example${path}`, {
+    return worker.app.request(`https://worker.example${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -389,6 +315,16 @@ export async function createTestSystem(): Promise<TestSystem> {
   async function readActivities(response: Response): Promise<Activity[]> {
     const body = (await response.json()) as { activities: Activity[] };
     return body.activities;
+  }
+
+  async function eventActivities(eventId: string): Promise<Activity[]> {
+    const rows = await database
+      .prepare(
+        'SELECT activity_id,installation_id,event_id,job_id,type,status,result,attempt,message,code,created_at FROM activities WHERE event_id=? ORDER BY attempt,activity_id',
+      )
+      .bind(eventId)
+      .all<Record<string, unknown>>();
+    return rows.results.map(mapActivity);
   }
 
   return {
@@ -417,7 +353,7 @@ export async function createTestSystem(): Promise<TestSystem> {
     async deliver(event, options = {}) {
       const rawBody = JSON.stringify(event);
       const timestamp = Math.floor(clock.now().valueOf() / 1000);
-      return app.request('https://worker.example/webhooks/throttle', {
+      return worker.app.request('https://worker.example/webhooks/throttle', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -439,20 +375,37 @@ export async function createTestSystem(): Promise<TestSystem> {
       if (!response.ok) throw new Error('Activity endpoint request failed');
       return readActivities(response);
     },
-    drainReadyQueue: () => queue.drain(consumeOne),
+    eventActivities,
+    async connectorActivityCount(eventId) {
+      return (await eventActivities(eventId)).filter(
+        (activity) => activity.type === 'connector_sync',
+      ).length;
+    },
+    drainReadyQueue: () => queueBinding.drain(consumeOne),
     advanceSeconds: (seconds) => clock.advanceSeconds(seconds),
-    queuedCount: () => queue.count(),
+    nowPlusSeconds: (seconds) =>
+      new Date(clock.now().valueOf() + seconds * 1000).toISOString(),
+    queuedCount: () => queueBinding.count(),
+    providerAttemptCount: () => providerAttempts,
     async jobCount() {
       const row = await database
         .prepare('SELECT count(*) AS count FROM jobs')
         .first<{ count: number }>();
       return row?.count ?? 0;
     },
-    jobState: (eventId) =>
-      database
-        .prepare('SELECT status,attempt FROM jobs WHERE job_id=?')
+    async jobState(eventId) {
+      const row = await database
+        .prepare('SELECT status,attempt,scheduled_at FROM jobs WHERE job_id=?')
         .bind(JSON.stringify([INSTALLATION_ID, eventId]))
-        .first<JobRow>(),
+        .first<{ status: string; attempt: number; scheduled_at: string }>();
+      return row === null
+        ? null
+        : {
+            status: row.status,
+            attempt: row.attempt,
+            scheduledAt: row.scheduled_at,
+          };
+    },
     providerOrders: () => [...orders],
     async dispose() {
       key.fill(0);

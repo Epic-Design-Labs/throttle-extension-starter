@@ -34,9 +34,11 @@ describe('demo extension lifecycle', () => {
     expect((await system.deliver(event)).status).toBe(202);
     expect((await system.deliver(event)).status).toBe(202);
     expect(await system.jobCount()).toBe(1);
+    expect(system.queuedCount()).toBe(1);
 
     await system.drainReadyQueue();
 
+    expect(system.queuedCount()).toBe(0);
     expect(await system.jobState(event.id)).toMatchObject({
       status: 'completed',
       attempt: 1,
@@ -47,11 +49,9 @@ describe('demo extension lifecycle', () => {
     expect(
       activities.filter(
         (activity) =>
-          activity.eventId === event.id &&
-          activity.type === 'connector_sync' &&
-          activity.result === 'success',
+          activity.eventId === event.id && activity.type === 'connector_sync',
       ),
-    ).toHaveLength(1);
+    ).toEqual([expect.objectContaining({ result: 'success' })]);
     expect(system.providerOrders()).toEqual([event.data.orderId]);
   });
 
@@ -123,11 +123,23 @@ describe('demo extension lifecycle', () => {
     expect((await system.deliver(event)).status).toBe(202);
 
     await system.drainReadyQueue();
+    const scheduled = system.nowPlusSeconds(5);
     expect(await system.jobState(event.id)).toMatchObject({
       status: 'retry',
       attempt: 1,
+      scheduledAt: scheduled,
     });
     expect(system.queuedCount()).toBe(1);
+    expect(system.providerAttemptCount()).toBe(1);
+    expect(await system.connectorActivityCount(event.id)).toBe(1);
+    await system.drainReadyQueue();
+    expect(await system.jobState(event.id)).toMatchObject({
+      status: 'retry',
+      attempt: 1,
+      scheduledAt: scheduled,
+    });
+    expect(system.providerAttemptCount()).toBe(1);
+    expect(await system.connectorActivityCount(event.id)).toBe(1);
     expect((await system.configure({})).status).toBe(200);
     system.advanceSeconds(5);
     await system.drainReadyQueue();
@@ -151,9 +163,27 @@ describe('demo extension lifecycle', () => {
     expect((await system.configure({ mode: '429' })).status).toBe(200);
     expect((await system.deliver(event)).status).toBe(202);
 
-    for (const delay of [5, 25, 125, 625, 0]) {
+    for (const [index, delay] of [5, 25, 125, 625, 0].entries()) {
       await system.drainReadyQueue();
-      if (delay > 0) system.advanceSeconds(delay);
+      const attempt = index + 1;
+      const expected =
+        delay > 0
+          ? {
+              status: 'retry',
+              attempt,
+              scheduledAt: system.nowPlusSeconds(delay),
+            }
+          : { status: 'failed', attempt };
+      expect(await system.jobState(event.id)).toMatchObject(expected);
+      expect(system.providerAttemptCount()).toBe(attempt);
+      expect(await system.connectorActivityCount(event.id)).toBe(attempt);
+      if (delay > 0) {
+        await system.drainReadyQueue();
+        expect(await system.jobState(event.id)).toMatchObject(expected);
+        expect(system.providerAttemptCount()).toBe(attempt);
+        expect(await system.connectorActivityCount(event.id)).toBe(attempt);
+        system.advanceSeconds(delay);
+      }
     }
 
     expect(await system.jobState(event.id)).toMatchObject({
@@ -201,17 +231,38 @@ describe('demo extension lifecycle', () => {
     await prepare(system);
     const event = { ...(await orderCreated()), id: 'evt_uninstalled' };
     expect((await system.deliver(event)).status).toBe(202);
+    expect(system.queuedCount()).toBe(1);
 
     expect(
       (await system.fetch('/api/connector', { method: 'DELETE' })).status,
     ).toBe(200);
     await system.drainReadyQueue();
 
+    expect(system.queuedCount()).toBe(0);
     expect(await system.jobState(event.id)).toMatchObject({
       status: 'cancelled',
       attempt: 0,
     });
     expect(system.providerOrders()).toEqual([]);
+    expect(system.providerAttemptCount()).toBe(0);
+    expect(await system.eventActivities(event.id)).toEqual([
+      expect.objectContaining({
+        type: 'event_received',
+        result: 'success',
+        code: 'EVENT_ACCEPTED',
+      }),
+    ]);
     expect((await system.fetch('/api/activity')).status).toBe(409);
+  });
+
+  test('uses the production Worker composition and queue entrypoint', async () => {
+    const helper = await readFile(
+      new URL('../helpers/test-system.ts', import.meta.url),
+      'utf8',
+    );
+    expect(helper).toContain('composeWorker');
+    expect(helper).not.toMatch(
+      /\b(?:createApp|createD1Adapters|connectProvider|processConnectorEvent|consumeConnectorQueue)\b/u,
+    );
   });
 });
