@@ -14,6 +14,7 @@ import type {
   ConfigurationStore,
   CredentialStore,
   InstallationStore,
+  JobExecutionStore,
   Logger,
 } from './ports.js';
 import { MAX_JOB_ATTEMPTS, retryDelaySeconds } from './retry.js';
@@ -27,6 +28,7 @@ export interface ProcessConnectorEventDependencies {
   credentials: CredentialStore;
   configurations: ConfigurationStore;
   activities: ActivityStore;
+  executions: JobExecutionStore;
   connector: ProviderConnector;
   clock: Clock;
   logger: Logger;
@@ -74,14 +76,48 @@ async function finish(
       : result.status === 'retry'
         ? 'retryable_failure'
         : 'terminal_failure';
-  await dependencies.activities.append(
-    makeActivity(
-      job,
-      dependencies.clock.now(),
-      activityResult,
-      result.status === 'success' ? undefined : result.code,
-    ),
-  );
+  try {
+    await dependencies.activities.append(
+      makeActivity(
+        job,
+        dependencies.clock.now(),
+        activityResult,
+        result.status === 'success' ? undefined : result.code,
+      ),
+    );
+  } catch {
+    const recoverable = job.attempt < MAX_JOB_ATTEMPTS;
+    await dependencies.executions.finish({
+      jobId: job.jobId,
+      attempt: job.attempt,
+      status: recoverable ? 'retry' : 'failed',
+      now: dependencies.clock.now(),
+    });
+    dependencies.logger.warn('Connector activity persistence failed', {
+      installationId: job.installationId,
+      jobId: job.jobId,
+      attempt: job.attempt,
+      code: 'INFRASTRUCTURE_ERROR',
+    });
+    return recoverable
+      ? {
+          status: 'retry',
+          delaySeconds: retryDelaySeconds(job.attempt),
+          code: 'INFRASTRUCTURE_ERROR',
+        }
+      : { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' };
+  }
+  await dependencies.executions.finish({
+    jobId: job.jobId,
+    attempt: job.attempt,
+    status:
+      result.status === 'success'
+        ? 'completed'
+        : result.status === 'retry'
+          ? 'retry'
+          : 'failed',
+    now: dependencies.clock.now(),
+  });
   return result;
 }
 
@@ -90,11 +126,26 @@ export async function processConnectorEvent(
   job: ConnectorJob,
   dependencies: ProcessConnectorEventDependencies,
 ): Promise<ProcessConnectorEventResult> {
-  if (job.attempt > MAX_JOB_ATTEMPTS)
-    return finish(job, dependencies, {
-      status: 'terminal',
-      code: 'ATTEMPTS_EXHAUSTED',
-    });
+  if (job.attempt > MAX_JOB_ATTEMPTS) {
+    const result = { status: 'terminal' as const, code: 'ATTEMPTS_EXHAUSTED' };
+    await dependencies.activities.append(
+      makeActivity(
+        job,
+        dependencies.clock.now(),
+        'terminal_failure',
+        result.code,
+      ),
+    );
+    return result;
+  }
+  const claim = await dependencies.executions.claim({
+    jobId: job.jobId,
+    attempt: job.attempt,
+    now: dependencies.clock.now(),
+  });
+  if (claim === 'duplicate') return { status: 'success' };
+  if (claim === 'unavailable')
+    return { status: 'terminal', code: 'JOB_UNAVAILABLE' };
   const installation = await dependencies.installations.getForJob(
     job.installationId,
   );
@@ -118,11 +169,11 @@ export async function processConnectorEvent(
       status: 'terminal',
       code: 'CREDENTIAL_MISSING',
     });
-  const ownedCredential = new Uint8Array(credential);
   try {
     await dependencies.connector.handleEvent({
       event: job.event,
-      credentials: ownedCredential,
+      idempotencyKey: job.event.id,
+      credentials: credential,
       configuration,
     });
     dependencies.logger.info('Connector event processed', {
@@ -133,14 +184,27 @@ export async function processConnectorEvent(
     });
     return finish(job, dependencies, { status: 'success' });
   } catch (cause) {
-    let error: AppError;
+    let error: AppError | undefined;
     if (
       cause instanceof RetryableProviderError ||
       cause instanceof TerminalProviderError ||
       cause instanceof ConfigurationError
     )
       error = cause;
-    else error = new InfrastructureError({ cause });
+    else if (cause instanceof InfrastructureError) error = cause;
+    else {
+      dependencies.logger.error('Unexpected connector error', {
+        installationId: job.installationId,
+        eventId: job.event.id,
+        jobId: job.jobId,
+        attempt: job.attempt,
+        code: 'UNEXPECTED_ERROR',
+      });
+      return finish(job, dependencies, {
+        status: 'terminal',
+        code: 'UNEXPECTED_ERROR',
+      });
+    }
     const code = toActivityErrorCode(error);
     dependencies.logger.warn('Connector event failed', {
       installationId: job.installationId,
@@ -160,6 +224,6 @@ export async function processConnectorEvent(
       code: error.classification === 'retryable' ? 'ATTEMPTS_EXHAUSTED' : code,
     });
   } finally {
-    ownedCredential.fill(0);
+    credential.fill(0);
   }
 }

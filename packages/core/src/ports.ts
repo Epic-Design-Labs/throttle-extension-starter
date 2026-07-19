@@ -43,6 +43,7 @@ export interface InstallationStore {
 }
 
 export interface CredentialStore {
+  /** Returns a fresh caller-owned buffer. The caller must wipe it after use. */
   get(
     installationId: string,
     kind: CredentialKind,
@@ -57,6 +58,32 @@ export interface CredentialStore {
     credentials: Uint8Array,
   ): Promise<void>;
   delete(installationId: string, kind?: CredentialKind): Promise<void>;
+}
+
+export type JobClaimResult = 'claimed' | 'duplicate' | 'unavailable';
+export interface JobExecutionStore {
+  claim(input: {
+    jobId: string;
+    attempt: number;
+    now: Date;
+  }): Promise<JobClaimResult>;
+  finish(input: {
+    jobId: string;
+    attempt: number;
+    status: 'completed' | 'retry' | 'failed';
+    now: Date;
+  }): Promise<void>;
+}
+
+export interface ProviderConnectionStore {
+  /** Atomically persists both values, copying credentials before resolving. */
+  commit(input: {
+    installationId: string;
+    scope: InstallationScope;
+    credentials: Uint8Array;
+    providerAccountReference: string;
+    now: Date;
+  }): Promise<Installation>;
 }
 
 export type CredentialKind =

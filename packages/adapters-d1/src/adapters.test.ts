@@ -150,6 +150,163 @@ runPersistenceAdapterContract({
 });
 
 describe('D1 schema', () => {
+  test('atomically claims one concurrent execution and completes it', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'claim-workspace',
+      applicationId: 'claim-app',
+      environmentId: 'claim-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'claim-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const at = '2026-07-19T10:00:00.000Z';
+    await database
+      .prepare(
+        'INSERT INTO jobs (job_id, installation_id, payload_reference, attempt, status, scheduled_at, created_at, updated_at, lease_expires_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, NULL)',
+      )
+      .bind('claim-job', 'claim-installation', 'ref', 'pending', at, at, at)
+      .run();
+    const claims = await Promise.all([
+      adapters.executions.claim({
+        jobId: 'claim-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+      adapters.executions.claim({
+        jobId: 'claim-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ]);
+    expect(claims.sort()).toEqual(['claimed', 'duplicate']);
+    await adapters.executions.finish({
+      jobId: 'claim-job',
+      attempt: 1,
+      status: 'completed',
+      now: new Date(at),
+    });
+    expect(
+      await adapters.executions.claim({
+        jobId: 'claim-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toBe('duplicate');
+  });
+
+  test('provider connection commit rolls back account metadata when secret persistence fails', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'atomic-workspace',
+      applicationId: 'atomic-app',
+      environmentId: 'atomic-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'atomic-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    await database
+      .prepare(
+        "CREATE TRIGGER fail_atomic_secret BEFORE INSERT ON secrets WHEN NEW.installation_id = 'atomic-installation' BEGIN SELECT RAISE(ABORT, 'forced atomic failure'); END",
+      )
+      .run();
+    try {
+      await expect(
+        adapters.connections.commit({
+          installationId: 'atomic-installation',
+          scope,
+          credentials: new TextEncoder().encode('secret'),
+          providerAccountReference: 'account',
+          now: new Date('2026-07-19T11:00:00.000Z'),
+        }),
+      ).rejects.toThrow('forced atomic failure');
+    } finally {
+      await database.prepare('DROP TRIGGER fail_atomic_secret').run();
+    }
+    expect(
+      (await adapters.installations.get('atomic-installation', scope))
+        ?.providerAccountReference,
+    ).toBeUndefined();
+    expect(
+      await adapters.credentials.get(
+        'atomic-installation',
+        'providerCredentials',
+      ),
+    ).toBeUndefined();
+  });
+
+  test('concurrent provider connection commits never mix account and credential', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'race-workspace',
+      applicationId: 'race-app',
+      environmentId: 'race-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'race-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    await Promise.all([
+      adapters.connections.commit({
+        installationId: 'race-installation',
+        scope,
+        credentials: new TextEncoder().encode('secret-a'),
+        providerAccountReference: 'account-a',
+        now: new Date('2026-07-19T11:00:00.000Z'),
+      }),
+      adapters.connections.commit({
+        installationId: 'race-installation',
+        scope,
+        credentials: new TextEncoder().encode('secret-b'),
+        providerAccountReference: 'account-b',
+        now: new Date('2026-07-19T11:00:01.000Z'),
+      }),
+    ]);
+    const account = (
+      await adapters.installations.get('race-installation', scope)
+    )?.providerAccountReference;
+    const secret = new TextDecoder().decode(
+      await adapters.credentials.get(
+        'race-installation',
+        'providerCredentials',
+      ),
+    );
+    expect(`${account}:${secret}`).toEqual(
+      expect.stringMatching(/^(account-a:secret-a|account-b:secret-b)$/),
+    );
+  });
+
+  test('activity unrelated integrity failures reject', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    await expect(
+      adapters.activities.append({
+        activityId: 'bad-fk',
+        installationId: 'missing-installation',
+        type: 'connector_sync',
+        status: 'completed',
+        result: 'success',
+        attempt: 1,
+        createdAt: '2026-07-19T10:00:00.000Z',
+      }),
+    ).rejects.toThrow();
+  });
   test('trusted job lookup reloads state while provider reference update remains scoped and lifecycle-safe', async () => {
     const adapters = createD1Adapters({ database, credentialKeys: keyring });
     const value = {

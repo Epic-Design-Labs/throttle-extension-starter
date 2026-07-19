@@ -5,7 +5,7 @@ import {
 } from '@starter/core';
 
 export interface DemoSink {
-  recordOrderCreated(orderId: string): Promise<void>;
+  recordOrderCreated(orderId: string, idempotencyKey: string): Promise<void>;
 }
 export interface DemoBehavior {
   onPage(page: number): Promise<void>;
@@ -32,12 +32,13 @@ function object(value: unknown): Record<string, unknown> | undefined {
 export function createDemoProvider(
   options: DemoProviderOptions = {},
 ): ProviderConnector {
+  const completedKeys = new Set<string>();
   return {
     async validateCredentials(credentials) {
       if (!validCredential(credentials)) throw new TerminalProviderError();
       return { providerAccountReference: 'demo-account' };
     },
-    async handleEvent({ event, credentials, configuration }) {
+    async handleEvent({ event, idempotencyKey, credentials, configuration }) {
       if (!validCredential(credentials)) throw new TerminalProviderError();
       const config = object(configuration);
       const mode = config?.mode;
@@ -61,7 +62,10 @@ export function createDemoProvider(
         const orderId = event.data.orderId;
         if (typeof orderId !== 'string' || orderId.length === 0)
           throw new TerminalProviderError();
-        await options.sink?.recordOrderCreated(orderId);
+        if (!completedKeys.has(idempotencyKey)) {
+          await options.sink?.recordOrderCreated(orderId, idempotencyKey);
+          completedKeys.add(idempotencyKey);
+        }
       }
     },
   };

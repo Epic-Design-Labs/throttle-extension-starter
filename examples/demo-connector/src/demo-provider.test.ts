@@ -33,9 +33,29 @@ describe('fictional demo provider', () => {
     });
     await provider.handleEvent({
       event,
+      idempotencyKey: 'event-1',
       credentials: new TextEncoder().encode('demo-valid'),
       configuration: { mode: 'normal' },
     });
+    expect(ids).toEqual(['order-42']);
+  });
+  test('deduplicates an effect by stable provider idempotency key', async () => {
+    const ids: string[] = [];
+    const provider = createDemoProvider({
+      sink: {
+        recordOrderCreated: async (id) => {
+          ids.push(id);
+        },
+      },
+    });
+    const input = {
+      event,
+      idempotencyKey: 'stable-key',
+      credentials: new TextEncoder().encode('demo-valid'),
+      configuration: { mode: 'normal' },
+    };
+    await provider.handleEvent(input);
+    await provider.handleEvent(input);
     expect(ids).toEqual(['order-42']);
   });
   test.each(['429', '500', 'timeout'] as const)(
@@ -45,6 +65,7 @@ describe('fictional demo provider', () => {
       await expect(
         provider.handleEvent({
           event,
+          idempotencyKey: 'event-1',
           credentials: new TextEncoder().encode('demo-valid'),
           configuration: { mode },
         }),
@@ -58,6 +79,7 @@ describe('fictional demo provider', () => {
       await expect(
         provider.handleEvent({
           event,
+          idempotencyKey: 'event-1',
           credentials: new TextEncoder().encode('demo-valid'),
           configuration: { mode },
         }),
@@ -75,6 +97,7 @@ describe('fictional demo provider', () => {
     });
     await provider.handleEvent({
       event,
+      idempotencyKey: 'event-1',
       credentials: new TextEncoder().encode('demo-valid'),
       configuration: { mode: 'pagination', pages: 3 },
     });

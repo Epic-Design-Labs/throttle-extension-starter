@@ -2,7 +2,11 @@ import { describe, expect, test, vi } from 'vitest';
 import type { Activity, ConnectorJob, Installation } from '@starter/contracts';
 import { processConnectorEvent } from './process-event.js';
 import type { ProcessConnectorEventDependencies } from './process-event.js';
-import { RetryableProviderError, TerminalProviderError } from './errors.js';
+import {
+  InfrastructureError,
+  RetryableProviderError,
+  TerminalProviderError,
+} from './errors.js';
 import { MAX_JOB_ATTEMPTS } from './retry.js';
 
 const install: Installation = {
@@ -62,6 +66,10 @@ function setup(
       }),
       list: vi.fn(async () => []),
     },
+    executions: {
+      claim: vi.fn(async () => 'claimed' as const),
+      finish: vi.fn(async () => undefined),
+    },
     connector: { validateCredentials: vi.fn(), handleEvent },
     clock: { now: () => new Date('2026-07-19T01:00:00.000Z') },
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -81,6 +89,12 @@ describe('processConnectorEvent', () => {
       status: 'success',
     });
     expect(f.deps.connector.handleEvent).toHaveBeenCalledOnce();
+    expect(f.deps.connector.handleEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'evt' }),
+    );
+    expect(f.deps.executions.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'j', attempt: 1, status: 'completed' }),
+    );
     expect(f.activities).toMatchObject([
       {
         activityId: 'j:1',
@@ -92,6 +106,69 @@ describe('processConnectorEvent', () => {
         attempt: 1,
       },
     ]);
+  });
+  test('duplicate claim is a successful no-op with no provider or activity', async () => {
+    const f = setup();
+    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'duplicate',
+    );
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'success',
+    });
+    expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+    expect(f.activities).toHaveLength(0);
+  });
+  test('uses the same provider idempotency key across attempts', async () => {
+    const keys: string[] = [];
+    const f = setup(
+      vi.fn(async (input) => {
+        keys.push(input.idempotencyKey);
+      }),
+    );
+    await processConnectorEvent(job, f.deps);
+    await processConnectorEvent({ ...job, attempt: 2 }, f.deps);
+    expect(keys).toEqual(['evt', 'evt']);
+  });
+  test('redelivery after activity persistence failure reuses the stable provider key', async () => {
+    const keys: string[] = [];
+    const f = setup(
+      vi.fn(async (input) => {
+        keys.push(input.idempotencyKey);
+      }),
+    );
+    (f.deps.activities.append as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('activity unavailable'))
+      .mockResolvedValue(undefined);
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'retry',
+      delaySeconds: 5,
+      code: 'INFRASTRUCTURE_ERROR',
+    });
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'success',
+    });
+    expect(keys).toEqual(['evt', 'evt']);
+    expect(f.deps.executions.finish).toHaveBeenCalledTimes(2);
+  });
+  test('wipes the credential buffer returned by the store', async () => {
+    const f = setup();
+    const returned = new TextEncoder().encode('secret');
+    (f.deps.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      returned,
+    );
+    await processConnectorEvent(job, f.deps);
+    expect(returned).toEqual(new Uint8Array(6));
+  });
+  test('treats programmer errors as safe terminal failures', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new TypeError('secret raw');
+      }),
+    );
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'terminal',
+      code: 'UNEXPECTED_ERROR',
+    });
   });
   test.each(['pending', 'disconnected', 'uninstalled'] as const)(
     'rejects %s state without provider work',
@@ -174,10 +251,10 @@ describe('processConnectorEvent', () => {
     });
     expect(JSON.stringify(f.activities)).not.toContain('secret');
   });
-  test('retries unexpected errors as infrastructure failures, then exhausts', async () => {
+  test('retries explicit infrastructure errors, then exhausts', async () => {
     const f = setup(
       vi.fn(async () => {
-        throw new Error('raw provider body secret');
+        throw new InfrastructureError({ cause: 'raw provider body secret' });
       }),
     );
     expect(await processConnectorEvent(job, f.deps)).toEqual({
@@ -213,6 +290,7 @@ describe('processConnectorEvent', () => {
     expect(f.deps.configurations.get).not.toHaveBeenCalled();
     expect(f.deps.credentials.get).not.toHaveBeenCalled();
     expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+    expect(f.deps.executions.finish).not.toHaveBeenCalled();
     expect(f.activities).toMatchObject([
       {
         activityId: 'j:6',

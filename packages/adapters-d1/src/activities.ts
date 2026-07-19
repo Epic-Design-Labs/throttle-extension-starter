@@ -25,7 +25,7 @@ export class D1ActivityStore implements ActivityStore {
     const item = activitySchema.parse(value);
     await this.db
       .prepare(
-        'INSERT OR IGNORE INTO activities (activity_id, installation_id, event_id, job_id, type, status, result, attempt, message, code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO activities (activity_id, installation_id, event_id, job_id, type, status, result, attempt, message, code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(activity_id) DO NOTHING',
       )
       .bind(
         item.activityId,

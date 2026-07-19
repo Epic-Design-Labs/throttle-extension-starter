@@ -4,15 +4,15 @@ import type { ProviderConnector } from './provider.js';
 import type {
   ActivityStore,
   Clock,
-  CredentialStore,
   InstallationScope,
   InstallationStore,
   Logger,
+  ProviderConnectionStore,
 } from './ports.js';
 
 export interface ConnectProviderDependencies {
   installations: InstallationStore;
-  credentials: CredentialStore;
+  connections: ProviderConnectionStore;
   activities: ActivityStore;
   connector: ProviderConnector;
   clock: Clock;
@@ -45,19 +45,14 @@ export async function connectProvider(
     )
       throw new ValidationError();
     storageCredentials = new Uint8Array(input.credentials);
-    await dependencies.credentials.set(
-      input.installationId,
-      'providerCredentials',
-      storageCredentials,
-    );
     const connectedAt = dependencies.clock.now();
-    const updated =
-      await dependencies.installations.updateProviderAccountReference(
-        input.installationId,
-        input.scope,
-        validated.providerAccountReference,
-        connectedAt,
-      );
+    const updated = await dependencies.connections.commit({
+      installationId: input.installationId,
+      scope: input.scope,
+      credentials: storageCredentials,
+      providerAccountReference: validated.providerAccountReference,
+      now: connectedAt,
+    });
     await dependencies.activities.append({
       activityId: `connect:${input.installationId}:${connectedAt.toISOString()}`,
       installationId: input.installationId,

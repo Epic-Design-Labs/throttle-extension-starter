@@ -7,6 +7,8 @@ export interface ProviderConnector {
 
   handleEvent(input: {
     event: ThrottleEvent;
+    /** Stable across retries; providers must use this to deduplicate effects. */
+    idempotencyKey: string;
     credentials: Uint8Array;
     configuration: unknown;
   }): Promise<void>;

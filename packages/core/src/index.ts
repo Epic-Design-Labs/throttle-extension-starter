@@ -34,10 +34,13 @@ export type {
   CredentialKind,
   DeliveryStore,
   InstallationStore,
+  JobClaimResult,
+  JobExecutionStore,
   InstallationScope,
   JobQueue,
   LogFields,
   Logger,
+  ProviderConnectionStore,
 } from './ports.js';
 export { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from '@starter/contracts';
 export {

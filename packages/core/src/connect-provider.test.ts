@@ -39,13 +39,27 @@ function setup(overrides: Partial<ConnectProviderDependencies> = {}) {
         },
       ),
     },
-    credentials: {
-      get: vi.fn(async () => saved),
-      set: vi.fn(async (_id, _kind, bytes) => {
-        calls.push('credential');
-        saved = new Uint8Array(bytes);
-      }),
-      delete: vi.fn(),
+    connections: {
+      commit: vi.fn(
+        async ({
+          installationId,
+          scope,
+          credentials,
+          providerAccountReference,
+          now,
+        }) => {
+          calls.push('connection');
+          saved = new Uint8Array(credentials);
+          current = {
+            ...current,
+            installationId,
+            ...scope,
+            providerAccountReference,
+            updatedAt: now.toISOString(),
+          };
+          return current;
+        },
+      ),
     },
     activities: {
       append: vi.fn(async () => undefined),
@@ -85,13 +99,18 @@ describe('connectProvider', () => {
         }),
         handleEvent: vi.fn(),
       },
-      credentials: {
-        get: vi.fn(),
-        set: vi.fn(async (_id, _kind, bytes) => {
-          storageReference = bytes;
-          expect(bytes).not.toBe(validationReference);
-        }),
-        delete: vi.fn(),
+      connections: {
+        commit: vi.fn(
+          async ({ credentials, providerAccountReference, now }) => {
+            storageReference = credentials;
+            expect(credentials).not.toBe(validationReference);
+            return {
+              ...installation,
+              providerAccountReference,
+              updatedAt: now.toISOString(),
+            };
+          },
+        ),
       },
     });
     const caller = new TextEncoder().encode('valid-secret');
@@ -112,7 +131,7 @@ describe('connectProvider', () => {
     expect(validationReference).not.toBe(storageReference);
     expect(validationReference).toEqual(new Uint8Array('valid-secret'.length));
     expect(storageReference).toEqual(new Uint8Array('valid-secret'.length));
-    expect(fixture.calls).toEqual(['installation']);
+    expect(fixture.calls).toEqual([]);
     expect(new TextDecoder().decode(caller)).toBe('valid-secret');
     expect(result.providerAccountReference).toBe('provider-account');
     expect(result.workspaceId).toBe('workspace-1');
@@ -157,7 +176,7 @@ describe('connectProvider', () => {
       ),
     ).rejects.toBeInstanceOf(TerminalProviderError);
     expect(fixture.saved()).toEqual(new Uint8Array([9]));
-    expect(fixture.dependencies.credentials.set).not.toHaveBeenCalled();
+    expect(fixture.dependencies.connections.commit).not.toHaveBeenCalled();
     expect(
       JSON.stringify(
         (fixture.dependencies.logger.error as ReturnType<typeof vi.fn>).mock
@@ -195,7 +214,7 @@ describe('connectProvider', () => {
         fixture.dependencies,
       ),
     ).rejects.toThrow();
-    expect(fixture.dependencies.credentials.set).not.toHaveBeenCalled();
+    expect(fixture.dependencies.connections.commit).not.toHaveBeenCalled();
   });
 
   test.each(['pending', 'disconnected', 'uninstalled'] as const)(
