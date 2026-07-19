@@ -1,6 +1,73 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+function importSpecifiers(source: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    'source.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const specifiers: string[] = [];
+
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return specifiers;
+}
+
+function isForbiddenImport(specifier: string): boolean {
+  return /^(?:cloudflare:|node:|@cloudflare(?:\/|$)|react(?:[-/]|$)|postgres(?:[-./]|$)|wrangler(?:\/|$))/.test(
+    specifier,
+  );
+}
+
+describe('import specifier inspection', () => {
+  it('finds static, export-from, and dynamic imports', () => {
+    const source = `
+      import React from 'react';
+      export { readFile } from 'node:fs/promises';
+      const database = import('postgres');
+    `;
+
+    expect(importSpecifiers(source)).toEqual([
+      'react',
+      'node:fs/promises',
+      'postgres',
+    ]);
+    expect(importSpecifiers(source).filter(isForbiddenImport)).toHaveLength(3);
+  });
+
+  it('ignores comments, identifiers, and ordinary string content', () => {
+    const source = `
+      // import React from 'react';
+      const wranglerStatus = 'postgres and node: are words, not imports';
+      const documentation = "import('@cloudflare/workers-types')";
+    `;
+
+    expect(importSpecifiers(source)).toEqual([]);
+  });
+});
 
 async function sourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -19,9 +86,7 @@ describe('portable package boundaries', () => {
     async (dir) => {
       for (const file of await sourceFiles(dir)) {
         const source = await readFile(file, 'utf8');
-        expect(source).not.toMatch(
-          /cloudflare:|node:|@cloudflare|react|postgres|wrangler/,
-        );
+        expect(importSpecifiers(source).filter(isForbiddenImport)).toEqual([]);
       }
     },
   );
