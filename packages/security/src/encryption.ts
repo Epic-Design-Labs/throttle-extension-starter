@@ -116,21 +116,27 @@ export async function encryptSecret(
 ): Promise<EncryptedSecret> {
   validateKeyVersion(keyVersion);
   const keyBytes = validateRootKey(rootKey);
-  const additionalData = encodeAdditionalData(installationId, keyVersion);
-  const plaintextBytes = validatePlaintext(plaintext);
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-  const key = await importKey(keyBytes);
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData },
-    key,
-    plaintextBytes,
-  );
-  return {
-    algorithm: ALGORITHM,
-    keyVersion,
-    iv: encodeBase64Url(iv),
-    ciphertext: encodeBase64Url(new Uint8Array(ciphertext)),
-  };
+  let plaintextBytes: Uint8Array<ArrayBuffer> | undefined;
+  try {
+    const additionalData = encodeAdditionalData(installationId, keyVersion);
+    plaintextBytes = validatePlaintext(plaintext);
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    const key = await importKey(keyBytes);
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData },
+      key,
+      plaintextBytes,
+    );
+    return {
+      algorithm: ALGORITHM,
+      keyVersion,
+      iv: encodeBase64Url(iv),
+      ciphertext: encodeBase64Url(new Uint8Array(ciphertext)),
+    };
+  } finally {
+    keyBytes.fill(0);
+    plaintextBytes?.fill(0);
+  }
 }
 
 /**
@@ -142,6 +148,7 @@ export async function decryptSecret(
   rootKey: Uint8Array,
   installationId: string,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  let keyBytes: Uint8Array<ArrayBuffer> | undefined;
   try {
     if (
       typeof envelope !== 'object' ||
@@ -182,7 +189,8 @@ export async function decryptSecret(
     if (iv.byteLength !== IV_LENGTH || ciphertext.byteLength < 16) {
       throw new Error(DECRYPTION_ERROR);
     }
-    const key = await importKey(validateRootKey(rootKey));
+    keyBytes = validateRootKey(rootKey);
+    const key = await importKey(keyBytes);
     const plaintext = await crypto.subtle.decrypt(
       {
         name: 'AES-GCM',
@@ -198,5 +206,7 @@ export async function decryptSecret(
     return new Uint8Array(plaintext);
   } catch {
     throw new Error(DECRYPTION_ERROR);
+  } finally {
+    keyBytes?.fill(0);
   }
 }

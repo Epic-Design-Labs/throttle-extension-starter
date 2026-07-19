@@ -21,6 +21,19 @@ const encodeBase64Url = (value: Uint8Array) =>
     .replace(/=+$/u, '');
 
 describe('secret encryption', () => {
+  it('does not mutate caller-owned plaintext, root keys, or returned plaintext', async () => {
+    const key = validKey();
+    const keyCopy = new Uint8Array(key);
+    const plaintext = encoder.encode('secret');
+    const plaintextCopy = new Uint8Array(plaintext);
+    const encrypted = await encryptSecret(plaintext, key, 'inst_1');
+    expect(key).toEqual(keyCopy);
+    expect(plaintext).toEqual(plaintextCopy);
+    const decrypted = await decryptSecret(encrypted, key, 'inst_1');
+    decrypted.fill(0);
+    expect(key).toEqual(keyCopy);
+    expect(plaintext).toEqual(plaintextCopy);
+  });
   it('round-trips only with matching installation context', async () => {
     const key = validKey();
     const encrypted = await encryptSecret(

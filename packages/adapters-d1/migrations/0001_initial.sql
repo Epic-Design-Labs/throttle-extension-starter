@@ -65,3 +65,20 @@ CREATE TABLE activities (
   created_at TEXT NOT NULL
 );
 CREATE INDEX activities_installation_recent ON activities(installation_id, created_at DESC, activity_id DESC);
+
+CREATE TRIGGER secrets_block_uninstalled_insert BEFORE INSERT ON secrets
+WHEN (SELECT status FROM installations WHERE installation_id = NEW.installation_id) = 'uninstalled'
+BEGIN SELECT RAISE(ABORT, 'installation is uninstalled'); END;
+
+CREATE TRIGGER secrets_block_uninstalled_update BEFORE UPDATE ON secrets
+WHEN (SELECT status FROM installations WHERE installation_id = NEW.installation_id) = 'uninstalled'
+BEGIN SELECT RAISE(ABORT, 'installation is uninstalled'); END;
+
+CREATE TRIGGER jobs_block_uninstalled_insert BEFORE INSERT ON jobs
+WHEN (SELECT status FROM installations WHERE installation_id = NEW.installation_id) = 'uninstalled'
+BEGIN SELECT RAISE(ABORT, 'installation is uninstalled'); END;
+
+CREATE TRIGGER jobs_block_uninstalled_requeue BEFORE UPDATE ON jobs
+WHEN NEW.status IN ('pending', 'retry', 'processing')
+ AND (SELECT status FROM installations WHERE installation_id = NEW.installation_id) = 'uninstalled'
+BEGIN SELECT RAISE(ABORT, 'installation is uninstalled'); END;

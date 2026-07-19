@@ -46,6 +46,15 @@ describe('installation contract', () => {
     ).toBe(createdAt);
   });
 
+  it('requires uninstall timestamps exactly for uninstalled state', () => {
+    expect(() =>
+      installationSchema.parse({ ...installation, status: 'uninstalled' }),
+    ).toThrow();
+    expect(() =>
+      installationSchema.parse({ ...installation, uninstalledAt: createdAt }),
+    ).toThrow();
+  });
+
   it('rejects the retired uninstallAt field', () => {
     expect(() =>
       installationSchema.parse({ ...installation, uninstallAt: createdAt }),

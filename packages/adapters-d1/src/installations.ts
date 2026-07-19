@@ -58,9 +58,9 @@ export class D1InstallationStore implements InstallationStore {
   }
   async upsert(value: Installation): Promise<Installation> {
     const item = installationSchema.parse(value);
-    await this.db
+    const result = await this.db
       .prepare(
-        `INSERT INTO installations (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id) DO UPDATE SET workspace_id=excluded.workspace_id, application_id=excluded.application_id, environment_id=excluded.environment_id, environment_kind=excluded.environment_kind, extension_version=excluded.extension_version, provider_account_reference=excluded.provider_account_reference, status=excluded.status, last_successful_sync_cursor=excluded.last_successful_sync_cursor, created_at=excluded.created_at, updated_at=excluded.updated_at, uninstalled_at=excluded.uninstalled_at`,
+        `INSERT INTO installations (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id) DO UPDATE SET environment_kind=excluded.environment_kind, extension_version=excluded.extension_version, provider_account_reference=excluded.provider_account_reference, status=excluded.status, last_successful_sync_cursor=excluded.last_successful_sync_cursor, updated_at=excluded.updated_at, uninstalled_at=excluded.uninstalled_at WHERE installations.status != 'uninstalled' AND installations.workspace_id=excluded.workspace_id AND installations.application_id=excluded.application_id AND installations.environment_id=excluded.environment_id AND installations.created_at=excluded.created_at`,
       )
       .bind(
         item.installationId,
@@ -77,6 +77,10 @@ export class D1InstallationStore implements InstallationStore {
         item.uninstalledAt ?? null,
       )
       .run();
+    if (result.meta.changes !== 1)
+      throw new Error(
+        'Installation update conflicts with immutable identity or lifecycle state',
+      );
     return (await this.get(item.installationId, item))!;
   }
   async findWebhookVerificationCandidates(input: {

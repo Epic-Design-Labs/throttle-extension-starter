@@ -1,5 +1,8 @@
 import type { Activity, Installation } from '@starter/contracts';
-import { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from '@starter/contracts';
+import {
+  installationSchema,
+  MAX_WEBHOOK_VERIFICATION_CANDIDATES,
+} from '@starter/contracts';
 import type {
   ActivityStore,
   CredentialKind,
@@ -45,6 +48,12 @@ export interface PersistenceAdapterFixture {
     status: 'pending' | 'retry' | 'completed';
   }): Promise<void>;
   getJobStatus(jobId: string): Promise<string | undefined>;
+  setJobStatus(
+    jobId: string,
+    status: 'pending' | 'retry' | 'processing',
+  ): Promise<void>;
+  rotateCredentialKey(version: number, key: Uint8Array): void;
+  removeCredentialKey(version: number): void;
   cleanup(): Promise<void>;
 }
 export interface PersistenceAdapterContractFactory {
@@ -54,18 +63,19 @@ export interface PersistenceAdapterContractFactory {
   create(): Promise<PersistenceAdapterFixture>;
 }
 
-const installation = (overrides: Partial<Installation> = {}): Installation => ({
-  installationId: 'installation-a',
-  workspaceId: 'workspace-a',
-  applicationId: 'application-a',
-  environmentId: 'environment-a',
-  environmentKind: 'non_production',
-  extensionVersion: '1.0.0',
-  status: 'active',
-  createdAt: '2026-07-19T10:00:00.000Z',
-  updatedAt: '2026-07-19T10:00:00.000Z',
-  ...overrides,
-});
+const installation = (overrides: Partial<Installation> = {}): Installation =>
+  installationSchema.parse({
+    installationId: 'installation-a',
+    workspaceId: 'workspace-a',
+    applicationId: 'application-a',
+    environmentId: 'environment-a',
+    environmentKind: 'non_production',
+    extensionVersion: '1.0.0',
+    status: 'active',
+    createdAt: '2026-07-19T10:00:00.000Z',
+    updatedAt: '2026-07-19T10:00:00.000Z',
+    ...overrides,
+  });
 const scope = (
   overrides: Partial<InstallationScope> = {},
 ): InstallationScope => ({
@@ -94,6 +104,23 @@ export function runPersistenceAdapterContract(
         replacement,
       );
       expect(await installations.get('missing', scope())).toBeUndefined();
+      await fixture.cleanup();
+    });
+
+    test('preserves installation identity and creation time on upsert collisions', async () => {
+      const fixture = await factory.create();
+      const { installations } = fixture;
+      await installations.upsert(installation());
+      for (const collision of [
+        installation({ workspaceId: 'wrong' }),
+        installation({ applicationId: 'wrong' }),
+        installation({ environmentId: 'wrong' }),
+        installation({ createdAt: '2026-07-20T10:00:00.000Z' }),
+      ])
+        await expect(installations.upsert(collision)).rejects.toThrow();
+      expect(await installations.get('installation-a', scope())).toEqual(
+        installation(),
+      );
       await fixture.cleanup();
     });
 
@@ -233,6 +260,51 @@ export function runPersistenceAdapterContract(
       await fixture.cleanup();
     });
 
+    test('reads retained old credential keys and writes with the rotated current key', async () => {
+      const fixture = await factory.create();
+      await fixture.installations.upsert(installation());
+      await fixture.credentials.set(
+        'installation-a',
+        'providerCredentials',
+        new TextEncoder().encode('old'),
+      );
+      fixture.rotateCredentialKey(4, new Uint8Array(32).fill(9));
+      expect(
+        new TextDecoder().decode(
+          await fixture.credentials.get(
+            'installation-a',
+            'providerCredentials',
+          ),
+        ),
+      ).toBe('old');
+      await fixture.credentials.set(
+        'installation-a',
+        'webhookSigningSecret',
+        new TextEncoder().encode('new'),
+      );
+      expect(
+        (
+          await fixture.inspectStoredSecret(
+            'installation-a',
+            'webhookSigningSecret',
+          )
+        )?.keyVersion,
+      ).toBe(4);
+      fixture.removeCredentialKey(3);
+      await expect(
+        fixture.credentials.get('installation-a', 'providerCredentials'),
+      ).rejects.toThrow();
+      expect(
+        new TextDecoder().decode(
+          await fixture.credentials.get(
+            'installation-a',
+            'webhookSigningSecret',
+          ),
+        ),
+      ).toBe('new');
+      await fixture.cleanup();
+    });
+
     test('accepts exactly one of two concurrent duplicate deliveries', async () => {
       const fixture = await factory.create();
       await fixture.installations.upsert(installation());
@@ -346,6 +418,53 @@ export function runPersistenceAdapterContract(
       expect(await fixture.getJobStatus('pending-job')).toBe('cancelled');
       expect(await fixture.getJobStatus('retry-job')).toBe('cancelled');
       expect(await fixture.getJobStatus('done-job')).toBe('completed');
+      await expect(
+        credentials.set(
+          'installation-a',
+          'throttleApiKey',
+          new Uint8Array([9]),
+        ),
+      ).rejects.toThrow();
+      await expect(
+        fixture.seedJob({
+          jobId: 'late-job',
+          installationId: 'installation-a',
+          status: 'pending',
+        }),
+      ).rejects.toThrow();
+      await expect(fixture.setJobStatus('done-job', 'retry')).rejects.toThrow();
+      await expect(
+        installations.upsert(
+          installation({ updatedAt: '2026-07-20T00:00:00.000Z' }),
+        ),
+      ).rejects.toThrow();
+      expect((await installations.get('installation-a', scope()))?.status).toBe(
+        'uninstalled',
+      );
+      await fixture.cleanup();
+    });
+
+    test('concurrent uninstall and credential write cannot leave a secret behind', async () => {
+      const fixture = await factory.create();
+      await fixture.installations.upsert(installation());
+      await Promise.allSettled([
+        fixture.installations.markUninstalled(
+          'installation-a',
+          scope(),
+          new Date('2026-07-19T15:00:00.000Z'),
+        ),
+        fixture.credentials.set(
+          'installation-a',
+          'providerCredentials',
+          new TextEncoder().encode('racing-secret'),
+        ),
+      ]);
+      expect(
+        (await fixture.installations.get('installation-a', scope()))?.status,
+      ).toBe('uninstalled');
+      expect(
+        await fixture.credentials.get('installation-a', 'providerCredentials'),
+      ).toBeUndefined();
       await fixture.cleanup();
     });
   });

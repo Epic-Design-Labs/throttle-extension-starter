@@ -20,11 +20,16 @@ interface SecretRow {
   ciphertext: unknown;
 }
 
+export interface CredentialKeyring {
+  /** Keys remain caller-owned; the adapter and security layer copy key bytes before use. */
+  current(): { version: number; key: Uint8Array };
+  resolve(version: number): Uint8Array | undefined;
+}
+
 export class D1CredentialStore implements CredentialStore {
   constructor(
     private readonly db: D1Database,
-    private readonly rootKey: Uint8Array,
-    private readonly keyVersion: number,
+    private readonly keyring: CredentialKeyring,
   ) {}
   async get(
     installationId: string,
@@ -38,6 +43,8 @@ export class D1CredentialStore implements CredentialStore {
       .bind(id, validateKind(kind))
       .first<SecretRow>();
     if (row === null) return undefined;
+    const key = this.keyring.resolve(row.key_version as number);
+    if (key === undefined) throw new Error('Unable to decrypt secret');
     return decryptSecret(
       {
         algorithm: row.algorithm,
@@ -45,7 +52,7 @@ export class D1CredentialStore implements CredentialStore {
         iv: row.iv,
         ciphertext: row.ciphertext,
       },
-      this.rootKey,
+      key,
       id,
     );
   }
@@ -58,28 +65,41 @@ export class D1CredentialStore implements CredentialStore {
     validateKind(kind);
     const owned = new Uint8Array(credentials);
     try {
+      const current = this.keyring.current();
       const envelope = await encryptSecret(
         owned,
-        this.rootKey,
+        current.key,
         id,
-        this.keyVersion,
+        current.version,
       );
       const now = new Date().toISOString();
-      await this.db
-        .prepare(
-          `INSERT INTO secrets (installation_id, kind, algorithm, key_version, iv, ciphertext, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id, kind) DO UPDATE SET algorithm=excluded.algorithm, key_version=excluded.key_version, iv=excluded.iv, ciphertext=excluded.ciphertext, updated_at=excluded.updated_at`,
+      try {
+        await this.db
+          .prepare(
+            `INSERT INTO secrets (installation_id, kind, algorithm, key_version, iv, ciphertext, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id, kind) DO UPDATE SET algorithm=excluded.algorithm, key_version=excluded.key_version, iv=excluded.iv, ciphertext=excluded.ciphertext, updated_at=excluded.updated_at`,
+          )
+          .bind(
+            id,
+            kind,
+            envelope.algorithm,
+            envelope.keyVersion,
+            envelope.iv,
+            envelope.ciphertext,
+            now,
+            now,
+          )
+          .run();
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes('installation is uninstalled')
         )
-        .bind(
-          id,
-          kind,
-          envelope.algorithm,
-          envelope.keyVersion,
-          envelope.iv,
-          envelope.ciphertext,
-          now,
-          now,
-        )
-        .run();
+          throw new Error(
+            'Credential write blocked for uninstalled installation',
+            { cause: error },
+          );
+        throw error;
+      }
     } finally {
       owned.fill(0);
     }
