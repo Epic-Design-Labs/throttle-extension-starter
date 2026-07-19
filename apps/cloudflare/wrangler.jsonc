@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "replace-with-throttle-extension-worker-name",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-19",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "replace-with-d1-database-name",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/adapters-d1/migrations",
+    },
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "CONNECTOR_QUEUE",
+        "queue": "replace-with-connector-queue",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "replace-with-connector-queue",
+        "max_retries": 4,
+        "dead_letter_queue": "replace-with-connector-dead-letter-queue",
+      },
+    ],
+  },
+  "vars": {
+    "THROTTLE_DASHBOARD_ORIGIN": "https://dashboard.usethrottle.dev",
+    "THROTTLE_JWKS_URL": "https://api.usethrottle.dev/.well-known/extension-jwks.json",
+    "THROTTLE_EXTENSION_ID": "replace-with-extension-id",
+    "THROTTLE_READ_SCOPE": "connector:read",
+    "THROTTLE_MUTATION_SCOPE": "connector:write",
+    "ENCRYPTION_KEY_VERSION": "1",
+    "QUEUE_MAX_ATTEMPTS": "5",
+  },
+}

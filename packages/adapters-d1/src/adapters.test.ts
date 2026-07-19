@@ -64,11 +64,16 @@ beforeAll(async () => {
     d1Databases: { DB: `db-${crypto.randomUUID()}` },
   });
   database = (await runtime.getD1Database('DB')) as D1Database;
-  const migration = await readFile(
+  const initialMigration = await readFile(
     new URL('../migrations/0001_initial.sql', import.meta.url),
     'utf8',
   );
-  await applyMigration(database, migration);
+  const configurationMigration = await readFile(
+    new URL('../migrations/0002_configurations.sql', import.meta.url),
+    'utf8',
+  );
+  await applyMigration(database, initialMigration);
+  await applyMigration(database, configurationMigration);
 });
 
 runPersistenceAdapterContract({

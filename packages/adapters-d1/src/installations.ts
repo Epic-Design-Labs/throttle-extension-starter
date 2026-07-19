@@ -174,6 +174,17 @@ export class D1InstallationStore implements InstallationStore {
         ),
       this.db
         .prepare(
+          "DELETE FROM configurations WHERE installation_id = ? AND EXISTS (SELECT 1 FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'uninstalled')",
+        )
+        .bind(
+          installationId,
+          installationId,
+          scope.workspaceId,
+          scope.applicationId,
+          scope.environmentId,
+        ),
+      this.db
+        .prepare(
           `UPDATE jobs SET status='cancelled', updated_at=?, lease_expires_at=NULL, lease_token=NULL WHERE installation_id=? AND status IN ('pending','retry','processing') AND EXISTS (SELECT 1 FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'uninstalled')`,
         )
         .bind(

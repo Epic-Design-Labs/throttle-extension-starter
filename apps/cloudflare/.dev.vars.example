@@ -1,0 +1,4 @@
+# Generate a distinct 32-byte base64url key for local development.
+ENCRYPTION_KEY=
+# JSON object mapping prior numeric key versions to 32-byte base64url keys.
+ENCRYPTION_KEYRING={}

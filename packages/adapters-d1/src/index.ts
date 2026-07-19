@@ -6,6 +6,9 @@ import { D1InstallationStore } from './installations.js';
 import type { D1Database } from './database.js';
 import { D1JobExecutionStore } from './executions.js';
 import { D1ProviderConnectionStore } from './connections.js';
+import { D1ConfigurationStore } from './configurations.js';
+import { D1InstallationBootstrapStore } from './bootstrap.js';
+import { D1WebhookAcceptanceStore } from './webhook-acceptance.js';
 
 export type { D1Database, D1PreparedStatement, D1Result } from './database.js';
 export { D1ActivityStore } from './activities.js';
@@ -14,6 +17,10 @@ export type { CredentialKeyring } from './credentials.js';
 export { D1DeliveryStore } from './deliveries.js';
 export { D1JobExecutionStore } from './executions.js';
 export { D1ProviderConnectionStore } from './connections.js';
+export { D1ConfigurationStore } from './configurations.js';
+export { D1InstallationBootstrapStore } from './bootstrap.js';
+export { InstallationBootstrapError } from './bootstrap.js';
+export { D1WebhookAcceptanceStore } from './webhook-acceptance.js';
 export {
   D1InstallationStore,
   MAX_WEBHOOK_VERIFICATION_CANDIDATES,
@@ -33,5 +40,11 @@ export function createD1Adapters(input: {
       input.database,
       input.credentialKeys,
     ),
+    configurations: new D1ConfigurationStore(input.database),
+    bootstrap: new D1InstallationBootstrapStore(
+      input.database,
+      input.credentialKeys,
+    ),
+    webhookAcceptance: new D1WebhookAcceptanceStore(input.database),
   };
 }
