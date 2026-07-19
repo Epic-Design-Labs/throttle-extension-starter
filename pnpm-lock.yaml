@@ -32,7 +32,11 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@starter/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
 packages:
   '@emnapi/core@1.11.1':

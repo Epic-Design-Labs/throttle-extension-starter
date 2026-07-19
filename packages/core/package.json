@@ -2,8 +2,21 @@
   "name": "@starter/core",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "vitest run",
+    "test:consumer": "node --input-type=module -e \"const core = await import('@starter/core'); if (core.MAX_JOB_ATTEMPTS !== 5) throw new Error('package root did not export MAX_JOB_ATTEMPTS')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@starter/contracts": "workspace:*"
   }
 }

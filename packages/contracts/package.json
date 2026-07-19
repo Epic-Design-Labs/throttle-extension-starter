@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "test": "vitest run",
     "test:consumer": "node --input-type=module -e \"const contracts = await import('@starter/contracts'); if (!contracts.installationSchema) throw new Error('package root did not export installationSchema')\"",
