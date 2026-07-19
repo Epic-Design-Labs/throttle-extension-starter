@@ -150,6 +150,76 @@ runPersistenceAdapterContract({
 });
 
 describe('D1 schema', () => {
+  test('fences an expired claimant with a distinct token', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'fence-workspace',
+      applicationId: 'fence-app',
+      environmentId: 'fence-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'fence-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const at = '2026-07-19T10:00:00.000Z';
+    await database
+      .prepare(
+        'INSERT INTO jobs (job_id,installation_id,payload_reference,attempt,status,scheduled_at,created_at,updated_at,lease_expires_at,lease_token) VALUES (?,?,?,0,?,?,?,?,NULL,NULL)',
+      )
+      .bind('fence-job', 'fence-installation', 'ref', 'pending', at, at, at)
+      .run();
+    const first = await adapters.executions.claim({
+      jobId: 'fence-job',
+      attempt: 1,
+      now: new Date(at),
+    });
+    expect(first.status).toBe('claimed');
+    if (first.status !== 'claimed') throw new Error('expected claim');
+    await database
+      .prepare('UPDATE jobs SET lease_expires_at=? WHERE job_id=?')
+      .bind('2026-07-19T09:59:00.000Z', 'fence-job')
+      .run();
+    const second = await adapters.executions.claim({
+      jobId: 'fence-job',
+      attempt: 1,
+      now: new Date(at),
+    });
+    expect(second.status).toBe('claimed');
+    if (second.status !== 'claimed') throw new Error('expected reclaim');
+    expect(second.token).not.toBe(first.token);
+    expect(
+      await adapters.executions.finish({
+        jobId: 'fence-job',
+        attempt: 1,
+        token: first.token,
+        status: 'retry',
+        now: new Date(at),
+      }),
+    ).toBe('stale');
+    expect(
+      await adapters.executions.finish({
+        jobId: 'fence-job',
+        attempt: 1,
+        token: 'wrong-token',
+        status: 'retry',
+        now: new Date(at),
+      }),
+    ).toBe('stale');
+    expect(
+      await adapters.executions.finish({
+        jobId: 'fence-job',
+        attempt: 1,
+        token: second.token,
+        status: 'completed',
+        now: new Date(at),
+      }),
+    ).toBe('finished');
+  });
   test('atomically claims one concurrent execution and completes it', async () => {
     const adapters = createD1Adapters({ database, credentialKeys: keyring });
     const scope = {
@@ -185,10 +255,16 @@ describe('D1 schema', () => {
         now: new Date(at),
       }),
     ]);
-    expect(claims.sort()).toEqual(['claimed', 'duplicate']);
+    expect(claims.map((claim) => claim.status).sort()).toEqual([
+      'claimed',
+      'duplicate',
+    ]);
+    const claimed = claims.find((claim) => claim.status === 'claimed');
+    if (claimed?.status !== 'claimed') throw new Error('expected claim');
     await adapters.executions.finish({
       jobId: 'claim-job',
       attempt: 1,
+      token: claimed.token,
       status: 'completed',
       now: new Date(at),
     });
@@ -198,7 +274,7 @@ describe('D1 schema', () => {
         attempt: 1,
         now: new Date(at),
       }),
-    ).toBe('duplicate');
+    ).toMatchObject({ status: 'duplicate' });
   });
 
   test('advances retry attempts exactly once and rejects stale or skipped attempts', async () => {
@@ -232,16 +308,17 @@ describe('D1 schema', () => {
         at,
       )
       .run();
-    expect(
-      await adapters.executions.claim({
-        jobId: 'progress-job',
-        attempt: 1,
-        now: new Date(at),
-      }),
-    ).toBe('claimed');
+    const progressClaim = await adapters.executions.claim({
+      jobId: 'progress-job',
+      attempt: 1,
+      now: new Date(at),
+    });
+    expect(progressClaim).toMatchObject({ status: 'claimed' });
+    if (progressClaim.status !== 'claimed') throw new Error('expected claim');
     await adapters.executions.finish({
       jobId: 'progress-job',
       attempt: 1,
+      token: progressClaim.token,
       status: 'retry',
       now: new Date(at),
     });
@@ -251,21 +328,21 @@ describe('D1 schema', () => {
         attempt: 1,
         now: new Date(at),
       }),
-    ).toBe('duplicate');
+    ).toMatchObject({ status: 'duplicate' });
     expect(
       await adapters.executions.claim({
         jobId: 'progress-job',
         attempt: 3,
         now: new Date(at),
       }),
-    ).toBe('unavailable');
+    ).toMatchObject({ status: 'unavailable' });
     expect(
       await adapters.executions.claim({
         jobId: 'progress-job',
         attempt: 2,
         now: new Date(at),
       }),
-    ).toBe('claimed');
+    ).toMatchObject({ status: 'claimed' });
   });
 
   test('reclaims only the same attempt after its processing lease expires', async () => {
@@ -297,7 +374,7 @@ describe('D1 schema', () => {
         attempt: 1,
         now: new Date(at),
       }),
-    ).toBe('claimed');
+    ).toMatchObject({ status: 'claimed' });
     await database
       .prepare('UPDATE jobs SET lease_expires_at=? WHERE job_id=?')
       .bind('2026-07-19T09:59:00.000Z', 'lease-job')
@@ -308,14 +385,14 @@ describe('D1 schema', () => {
         attempt: 2,
         now: new Date(at),
       }),
-    ).toBe('unavailable');
+    ).toMatchObject({ status: 'unavailable' });
     expect(
       await adapters.executions.claim({
         jobId: 'lease-job',
         attempt: 1,
         now: new Date(at),
       }),
-    ).toBe('claimed');
+    ).toMatchObject({ status: 'claimed' });
   });
 
   test('uninstall cancels processing jobs and late finish cannot resurrect them', async () => {
@@ -377,13 +454,13 @@ describe('D1 schema', () => {
           at,
         ),
     ]);
-    expect(
-      await adapters.executions.claim({
-        jobId: 'race-uninstall-job',
-        attempt: 1,
-        now: new Date(at),
-      }),
-    ).toBe('claimed');
+    const uninstallClaim = await adapters.executions.claim({
+      jobId: 'race-uninstall-job',
+      attempt: 1,
+      now: new Date(at),
+    });
+    expect(uninstallClaim).toMatchObject({ status: 'claimed' });
+    if (uninstallClaim.status !== 'claimed') throw new Error('expected claim');
     await adapters.installations.markUninstalled(
       'race-uninstall-installation',
       scope,
@@ -393,6 +470,7 @@ describe('D1 schema', () => {
       await adapters.executions.finish({
         jobId: 'race-uninstall-job',
         attempt: 1,
+        token: uninstallClaim.token,
         status: 'retry',
         now: new Date('2026-07-19T10:02:00.000Z'),
       }),
@@ -403,15 +481,23 @@ describe('D1 schema', () => {
         attempt: 1,
         now: new Date('2026-07-19T11:00:00.000Z'),
       }),
-    ).toBe('duplicate');
+    ).toMatchObject({ status: 'duplicate' });
     expect(
       (
         await database
-          .prepare('SELECT status FROM jobs WHERE job_id=?')
+          .prepare('SELECT status, lease_token FROM jobs WHERE job_id=?')
           .bind('race-uninstall-job')
-          .first<{ status: string }>()
+          .first<{ status: string; lease_token: string | null }>()
       )?.status,
     ).toBe('cancelled');
+    expect(
+      (
+        await database
+          .prepare('SELECT lease_token FROM jobs WHERE job_id=?')
+          .bind('race-uninstall-job')
+          .first<{ lease_token: string | null }>()
+      )?.lease_token,
+    ).toBeNull();
     expect(
       (
         await database

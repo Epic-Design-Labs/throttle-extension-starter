@@ -18,7 +18,7 @@ export class D1JobExecutionStore implements JobExecutionStore {
     const lease = new Date(input.now.valueOf() + LEASE_MS).toISOString();
     const row = await this.db
       .prepare(
-        "UPDATE jobs SET status='processing', attempt=?, updated_at=?, lease_expires_at=? WHERE job_id=? AND ((status IN ('pending','retry') AND ?=attempt+1) OR (status='processing' AND lease_expires_at <= ? AND ?=attempt)) RETURNING job_id",
+        "UPDATE jobs SET status='processing', attempt=?, updated_at=?, lease_expires_at=?, lease_token=lower(hex(randomblob(16))) WHERE job_id=? AND ((status IN ('pending','retry') AND ?=attempt+1) OR (status='processing' AND lease_expires_at <= ? AND ?=attempt)) RETURNING lease_token",
       )
       .bind(
         input.attempt,
@@ -29,31 +29,33 @@ export class D1JobExecutionStore implements JobExecutionStore {
         now,
         input.attempt,
       )
-      .first();
-    if (row !== null) return 'claimed';
+      .first<{ lease_token: string }>();
+    if (row !== null) return { status: 'claimed', token: row.lease_token };
     const existing = await this.db
       .prepare('SELECT status, attempt FROM jobs WHERE job_id=?')
       .bind(input.jobId)
       .first<{ status: string; attempt: number }>();
     if (existing !== null && input.attempt <= existing.attempt)
-      return 'duplicate';
-    return 'unavailable';
+      return { status: 'duplicate' };
+    return { status: 'unavailable' };
   }
   async finish(input: {
     jobId: string;
     attempt: number;
+    token: string;
     status: 'completed' | 'retry' | 'failed';
     now: Date;
   }): Promise<JobFinishResult> {
     const result = await this.db
       .prepare(
-        "UPDATE jobs SET status=?, updated_at=?, lease_expires_at=NULL WHERE job_id=? AND status='processing' AND attempt=?",
+        "UPDATE jobs SET status=?, updated_at=?, lease_expires_at=NULL, lease_token=NULL WHERE job_id=? AND status='processing' AND attempt=? AND lease_token=?",
       )
       .bind(
         input.status,
         input.now.toISOString(),
         requireText(input.jobId, 'jobId'),
         input.attempt,
+        input.token,
       )
       .run();
     if (result.meta.changes === 1) return 'finished';

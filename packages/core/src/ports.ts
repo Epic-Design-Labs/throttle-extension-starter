@@ -60,13 +60,17 @@ export interface CredentialStore {
   delete(installationId: string, kind?: CredentialKind): Promise<void>;
 }
 
-export type JobClaimResult = 'claimed' | 'duplicate' | 'unavailable';
+export type JobClaimResult =
+  | { status: 'claimed'; token: string }
+  | { status: 'duplicate' }
+  | { status: 'unavailable' };
 export type JobFinishResult = 'finished' | 'cancelled' | 'stale';
 export interface JobExecutionStore {
   /**
    * Pending/retry jobs claim only stored attempt + 1. An expired processing
    * lease reclaims only its stored attempt. Same/stale attempts are duplicate;
-   * skipped/future attempts are unavailable.
+   * skipped/future attempts are unavailable. The claimed token is opaque and
+   * must be passed only to finish; never log or expose it to providers.
    */
   claim(input: {
     jobId: string;
@@ -76,6 +80,7 @@ export interface JobExecutionStore {
   finish(input: {
     jobId: string;
     attempt: number;
+    token: string;
     status: 'completed' | 'retry' | 'failed';
     now: Date;
   }): Promise<JobFinishResult>;

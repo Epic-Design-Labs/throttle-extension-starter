@@ -70,7 +70,10 @@ function setup(
       list: vi.fn(async () => []),
     },
     executions: {
-      claim: vi.fn(async () => 'claimed' as const),
+      claim: vi.fn(async () => ({
+        status: 'claimed' as const,
+        token: 'claim-token',
+      })),
       finish: vi.fn(async () => 'finished' as const),
     },
     connector: { validateCredentials: vi.fn(), handleEvent },
@@ -96,8 +99,24 @@ describe('processConnectorEvent', () => {
       expect.objectContaining({ idempotencyKey: '["i","evt"]' }),
     );
     expect(f.deps.executions.finish).toHaveBeenCalledWith(
-      expect.objectContaining({ jobId: 'j', attempt: 1, status: 'completed' }),
+      expect.objectContaining({
+        jobId: 'j',
+        attempt: 1,
+        status: 'completed',
+        token: 'claim-token',
+      }),
     );
+    expect(
+      JSON.stringify(
+        (f.deps.connector.handleEvent as ReturnType<typeof vi.fn>).mock.calls,
+      ),
+    ).not.toContain('claim-token');
+    expect(JSON.stringify(f.activities)).not.toContain('claim-token');
+    expect(
+      JSON.stringify(
+        (f.deps.logger.info as ReturnType<typeof vi.fn>).mock.calls,
+      ),
+    ).not.toContain('claim-token');
     expect(f.activities).toMatchObject([
       {
         activityId: 'j:1',
@@ -112,9 +131,9 @@ describe('processConnectorEvent', () => {
   });
   test('duplicate claim is a successful no-op with no provider or activity', async () => {
     const f = setup();
-    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'duplicate',
-    );
+    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'duplicate',
+    });
     expect(await processConnectorEvent(job, f.deps)).toEqual({
       status: 'success',
     });

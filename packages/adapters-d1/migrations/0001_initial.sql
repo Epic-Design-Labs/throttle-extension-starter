@@ -48,6 +48,7 @@ CREATE TABLE jobs (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
   ,lease_expires_at TEXT
+  ,lease_token TEXT
 );
 CREATE INDEX jobs_pending_schedule ON jobs(status, scheduled_at);
 CREATE INDEX jobs_installation_history ON jobs(installation_id, created_at DESC, job_id DESC);
