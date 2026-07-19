@@ -35,6 +35,7 @@ export interface AppDependencies {
   dashboardOrigin: string;
   authorizationScopes: { read: string; mutation: string };
   clock: { now(): Date };
+  encodeProviderCredentials(value: string): Uint8Array;
   createRequestId(): string;
   identityVerifier: ExtensionIdentityVerifier;
   readiness(): Promise<boolean>;

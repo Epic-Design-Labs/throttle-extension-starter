@@ -151,12 +151,12 @@ export function registerConnectorRoutes(
       typeof (body as Record<string, unknown>).credentials !== 'string'
     )
       throw invalidRequest();
-    const credentials = encoder.encode(
+    const credentials = dependencies.encodeProviderCredentials(
       (body as { credentials: string }).credentials,
     );
-    if (credentials.byteLength === 0 || credentials.byteLength > 8192)
-      throw invalidRequest();
     try {
+      if (credentials.byteLength === 0 || credentials.byteLength > 8192)
+        throw invalidRequest();
       const result = await dependencies.connect({
         identity: identity(c),
         credentials,

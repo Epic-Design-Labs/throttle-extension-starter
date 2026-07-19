@@ -91,6 +91,7 @@ export function composeWorker(rawEnv: Env) {
     dashboardOrigin: env.dashboardOrigin,
     authorizationScopes: env.authorizationScopes,
     clock,
+    encodeProviderCredentials: (value) => new TextEncoder().encode(value),
     createRequestId: () => crypto.randomUUID(),
     identityVerifier,
     readiness: async () => {

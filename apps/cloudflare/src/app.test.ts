@@ -49,6 +49,7 @@ function fixture(overrides: Partial<AppDependencies> = {}) {
       mutation: 'connector:write',
     },
     clock: { now: () => now },
+    encodeProviderCredentials: (value) => new TextEncoder().encode(value),
     createRequestId: () => 'request-safe-1',
     identityVerifier: { verify: vi.fn(async () => identity) },
     readiness: vi.fn(async () => true),
@@ -359,6 +360,25 @@ describe('worker HTTP application', () => {
         requestId: 'request-safe-1',
       },
     });
+  });
+
+  test.each([
+    ['empty', new Uint8Array(0)],
+    ['oversized', new Uint8Array(8193).fill(7)],
+  ])('wipes %s rejected provider credential bytes', async (_name, owned) => {
+    const connect = vi.fn(async () => installation);
+    const { app } = fixture({
+      encodeProviderCredentials: () => owned,
+      connect,
+    });
+    const response = await app.request('/api/connector/credentials', {
+      method: 'PUT',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ credentials: 'untrusted' }),
+    });
+    expect(response.status).toBe(400);
+    expect([...owned]).toEqual(new Array(owned.length).fill(0));
+    expect(connect).not.toHaveBeenCalled();
   });
 
   test.each([
