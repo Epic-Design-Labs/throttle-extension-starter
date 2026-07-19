@@ -1,0 +1,35 @@
+{
+  "name": "@starter/adapters-cloudflare-queue",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./consumer": {
+      "types": "./dist/consumer.d.ts",
+      "import": "./dist/consumer.js",
+      "default": "./dist/consumer.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "vitest run",
+    "test:consumer": "node --input-type=module -e \"const q = await import('@starter/adapters-cloudflare-queue/consumer'); if (!q.consumeConnectorQueue) throw new Error('consumer export missing')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@starter/contracts": "workspace:*",
+    "@starter/core": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20250617.0"
+  }
+}

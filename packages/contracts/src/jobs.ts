@@ -7,7 +7,6 @@ export const connectorJobSchema = z
     jobId: z.string().min(1),
     installationId: z.string().min(1),
     event: throttleEventSchema,
-    attempt: z.number().int().positive(),
     createdAt: z.iso.datetime(),
   })
   .strict();

@@ -61,24 +61,19 @@ export interface CredentialStore {
 }
 
 export type JobClaimResult =
-  | { status: 'claimed'; token: string }
+  | { status: 'claimed'; token: string; attempt: number }
   | { status: 'busy'; retryAfterSeconds: number }
   | { status: 'duplicate' }
   | { status: 'unavailable' };
 export type JobFinishResult = 'finished' | 'cancelled' | 'stale';
 export interface JobExecutionStore {
   /**
-   * Pending/retry jobs claim only stored attempt + 1. An expired processing
-   * lease reclaims only its stored attempt. Same/stale attempts are duplicate;
-   * a same-attempt live processing lease is busy with a bounded retry delay;
-   * skipped/future attempts are unavailable. The claimed token is opaque and
-   * must be passed only to finish; never log or expose it to providers.
+   * Atomically selects the durable business attempt. Pending/retry advances
+   * stored attempt once; an expired processing lease reclaims the same attempt.
+   * A live lease is busy, while terminal rows are duplicate. Queue delivery
+   * counts and immutable message bodies are never authoritative attempts.
    */
-  claim(input: {
-    jobId: string;
-    attempt: number;
-    now: Date;
-  }): Promise<JobClaimResult>;
+  claim(input: { jobId: string; now: Date }): Promise<JobClaimResult>;
   finish(input: {
     jobId: string;
     attempt: number;

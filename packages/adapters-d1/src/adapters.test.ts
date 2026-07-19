@@ -406,7 +406,7 @@ describe('D1 schema', () => {
     ).toMatchObject({ status: 'duplicate' });
   });
 
-  test('advances retry attempts exactly once and rejects stale or skipped attempts', async () => {
+  test('selects and advances durable retry attempts without message input', async () => {
     const adapters = createD1Adapters({ database, credentialKeys: keyring });
     const scope = {
       workspaceId: 'progress-workspace',
@@ -439,10 +439,9 @@ describe('D1 schema', () => {
       .run();
     const progressClaim = await adapters.executions.claim({
       jobId: 'progress-job',
-      attempt: 1,
       now: new Date(at),
     });
-    expect(progressClaim).toMatchObject({ status: 'claimed' });
+    expect(progressClaim).toMatchObject({ status: 'claimed', attempt: 1 });
     if (progressClaim.status !== 'claimed') throw new Error('expected claim');
     await adapters.executions.finish({
       jobId: 'progress-job',
@@ -460,24 +459,9 @@ describe('D1 schema', () => {
     expect(
       await adapters.executions.claim({
         jobId: 'progress-job',
-        attempt: 1,
         now: new Date(at),
       }),
-    ).toMatchObject({ status: 'duplicate' });
-    expect(
-      await adapters.executions.claim({
-        jobId: 'progress-job',
-        attempt: 3,
-        now: new Date(at),
-      }),
-    ).toMatchObject({ status: 'unavailable' });
-    expect(
-      await adapters.executions.claim({
-        jobId: 'progress-job',
-        attempt: 2,
-        now: new Date(at),
-      }),
-    ).toMatchObject({ status: 'claimed' });
+    ).toMatchObject({ status: 'claimed', attempt: 2 });
   });
 
   test('reclaims only the same attempt after its processing lease expires', async () => {
@@ -506,10 +490,9 @@ describe('D1 schema', () => {
     expect(
       await adapters.executions.claim({
         jobId: 'lease-job',
-        attempt: 1,
         now: new Date(at),
       }),
-    ).toMatchObject({ status: 'claimed' });
+    ).toMatchObject({ status: 'claimed', attempt: 1 });
     await database
       .prepare('UPDATE jobs SET lease_expires_at=? WHERE job_id=?')
       .bind('2026-07-19T09:59:00.000Z', 'lease-job')
@@ -517,17 +500,9 @@ describe('D1 schema', () => {
     expect(
       await adapters.executions.claim({
         jobId: 'lease-job',
-        attempt: 2,
         now: new Date(at),
       }),
-    ).toMatchObject({ status: 'unavailable' });
-    expect(
-      await adapters.executions.claim({
-        jobId: 'lease-job',
-        attempt: 1,
-        now: new Date(at),
-      }),
-    ).toMatchObject({ status: 'claimed' });
+    ).toMatchObject({ status: 'claimed', attempt: 1 });
   });
 
   test('uninstall cancels processing jobs and late finish cannot resurrect them', async () => {

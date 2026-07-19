@@ -126,13 +126,12 @@ describe('connector job contract', () => {
     jobId: 'job_1',
     installationId: 'inst_1',
     event,
-    attempt: 1,
     createdAt,
   };
 
   it('carries identifiers and event data', () => {
     expect(connectorJobSchema.parse(job)).toEqual(job);
-    expect(() => connectorJobSchema.parse({ ...job, attempt: 0 })).toThrow();
+    expect(() => connectorJobSchema.parse({ ...job, attempt: 1 })).toThrow();
   });
 
   it.each([

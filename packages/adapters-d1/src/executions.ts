@@ -12,26 +12,24 @@ export class D1JobExecutionStore implements JobExecutionStore {
   constructor(private readonly db: D1Database) {}
   async claim(input: {
     jobId: string;
-    attempt: number;
     now: Date;
+    /** @deprecated Queue delivery bodies are not authoritative. */
+    attempt?: number;
   }): Promise<JobClaimResult> {
     const now = input.now.toISOString();
     const lease = new Date(input.now.valueOf() + LEASE_MS).toISOString();
     const row = await this.db
       .prepare(
-        "UPDATE jobs SET status='processing', attempt=?, updated_at=?, lease_expires_at=?, lease_token=lower(hex(randomblob(16))) WHERE job_id=? AND ((status IN ('pending','retry') AND ?=attempt+1) OR (status='processing' AND lease_expires_at <= ? AND ?=attempt)) RETURNING lease_token",
+        "UPDATE jobs SET status='processing', attempt=CASE WHEN status IN ('pending','retry') THEN attempt+1 ELSE attempt END, updated_at=?, lease_expires_at=?, lease_token=lower(hex(randomblob(16))) WHERE job_id=? AND (status IN ('pending','retry') OR (status='processing' AND lease_expires_at <= ?)) RETURNING lease_token, attempt",
       )
-      .bind(
-        input.attempt,
-        now,
-        lease,
-        requireText(input.jobId, 'jobId'),
-        input.attempt,
-        now,
-        input.attempt,
-      )
-      .first<{ lease_token: string }>();
-    if (row !== null) return { status: 'claimed', token: row.lease_token };
+      .bind(now, lease, requireText(input.jobId, 'jobId'), now)
+      .first<{ lease_token: string; attempt: number }>();
+    if (row !== null)
+      return {
+        status: 'claimed',
+        token: row.lease_token,
+        attempt: row.attempt,
+      };
     const existing = await this.db
       .prepare(
         'SELECT status, attempt, lease_expires_at FROM jobs WHERE job_id=?',
@@ -44,7 +42,6 @@ export class D1JobExecutionStore implements JobExecutionStore {
       }>();
     if (
       existing?.status === 'processing' &&
-      input.attempt === existing.attempt &&
       existing.lease_expires_at !== null
     ) {
       const remaining = Math.ceil(
@@ -53,7 +50,10 @@ export class D1JobExecutionStore implements JobExecutionStore {
       if (remaining > 0)
         return { status: 'busy', retryAfterSeconds: Math.min(remaining, 300) };
     }
-    if (existing !== null && input.attempt <= existing.attempt)
+    if (
+      existing !== null &&
+      ['completed', 'failed', 'cancelled'].includes(existing.status)
+    )
       return { status: 'duplicate' };
     return { status: 'unavailable' };
   }

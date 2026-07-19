@@ -48,19 +48,20 @@ function scopeCode(
 }
 function makeActivity(
   job: ConnectorJob,
+  attempt: number,
   at: Date,
   result: Activity['result'],
   code?: string,
 ): Activity {
   return {
-    activityId: `${job.jobId}:${job.attempt}`,
+    activityId: `${job.jobId}:${attempt}`,
     installationId: job.installationId,
     eventId: job.event.id,
     jobId: job.jobId,
     type: 'connector_sync',
     status: 'completed',
     result,
-    attempt: job.attempt,
+    attempt,
     ...(code === undefined ? {} : { code }),
     createdAt: at.toISOString(),
   };
@@ -74,6 +75,7 @@ export function connectorIdempotencyKey(
 }
 async function finish(
   job: ConnectorJob,
+  attempt: number,
   dependencies: ProcessConnectorEventDependencies,
   token: string,
   result: ProcessConnectorEventResult,
@@ -86,7 +88,7 @@ async function finish(
         : 'terminal_failure';
   const execution = await dependencies.executions.finish({
     jobId: job.jobId,
-    attempt: job.attempt,
+    attempt,
     token,
     status:
       result.status === 'success'
@@ -96,6 +98,7 @@ async function finish(
           : 'failed',
     activity: makeActivity(
       job,
+      attempt,
       dependencies.clock.now(),
       activityResult,
       result.status === 'success' ? undefined : result.code,
@@ -113,21 +116,8 @@ export async function processConnectorEvent(
   job: ConnectorJob,
   dependencies: ProcessConnectorEventDependencies,
 ): Promise<ProcessConnectorEventResult> {
-  if (job.attempt > MAX_JOB_ATTEMPTS) {
-    const result = { status: 'terminal' as const, code: 'ATTEMPTS_EXHAUSTED' };
-    await dependencies.activities.append(
-      makeActivity(
-        job,
-        dependencies.clock.now(),
-        'terminal_failure',
-        result.code,
-      ),
-    );
-    return result;
-  }
   const claim = await dependencies.executions.claim({
     jobId: job.jobId,
-    attempt: job.attempt,
     now: dependencies.clock.now(),
   });
   if (claim.status === 'duplicate') return { status: 'success' };
@@ -139,12 +129,18 @@ export async function processConnectorEvent(
     };
   if (claim.status === 'unavailable')
     return { status: 'terminal', code: 'JOB_UNAVAILABLE' };
+  const attempt = claim.attempt;
+  if (attempt > MAX_JOB_ATTEMPTS)
+    return finish(job, attempt, dependencies, claim.token, {
+      status: 'terminal',
+      code: 'ATTEMPTS_EXHAUSTED',
+    });
   const installation = await dependencies.installations.getForJob(
     job.installationId,
   );
   const invalid = scopeCode(installation, job);
   if (invalid)
-    return finish(job, dependencies, claim.token, {
+    return finish(job, attempt, dependencies, claim.token, {
       status: 'terminal',
       code: invalid,
     });
@@ -152,7 +148,7 @@ export async function processConnectorEvent(
     job.installationId,
   );
   if (configuration === undefined)
-    return finish(job, dependencies, claim.token, {
+    return finish(job, attempt, dependencies, claim.token, {
       status: 'terminal',
       code: 'CONFIGURATION_MISSING',
     });
@@ -161,7 +157,7 @@ export async function processConnectorEvent(
     'providerCredentials',
   );
   if (!credential)
-    return finish(job, dependencies, claim.token, {
+    return finish(job, attempt, dependencies, claim.token, {
       status: 'terminal',
       code: 'CREDENTIAL_MISSING',
     });
@@ -176,9 +172,11 @@ export async function processConnectorEvent(
       installationId: job.installationId,
       eventId: job.event.id,
       jobId: job.jobId,
-      attempt: job.attempt,
+      attempt,
     });
-    return finish(job, dependencies, claim.token, { status: 'success' });
+    return finish(job, attempt, dependencies, claim.token, {
+      status: 'success',
+    });
   } catch (cause) {
     let error: AppError | undefined;
     if (
@@ -193,10 +191,10 @@ export async function processConnectorEvent(
         installationId: job.installationId,
         eventId: job.event.id,
         jobId: job.jobId,
-        attempt: job.attempt,
+        attempt,
         code: 'UNEXPECTED_ERROR',
       });
-      return finish(job, dependencies, claim.token, {
+      return finish(job, attempt, dependencies, claim.token, {
         status: 'terminal',
         code: 'UNEXPECTED_ERROR',
       });
@@ -206,16 +204,16 @@ export async function processConnectorEvent(
       installationId: job.installationId,
       eventId: job.event.id,
       jobId: job.jobId,
-      attempt: job.attempt,
+      attempt,
       code,
     });
-    if (error.classification === 'retryable' && job.attempt < MAX_JOB_ATTEMPTS)
-      return finish(job, dependencies, claim.token, {
+    if (error.classification === 'retryable' && attempt < MAX_JOB_ATTEMPTS)
+      return finish(job, attempt, dependencies, claim.token, {
         status: 'retry',
-        delaySeconds: retryDelaySeconds(job.attempt),
+        delaySeconds: retryDelaySeconds(attempt),
         code,
       });
-    return finish(job, dependencies, claim.token, {
+    return finish(job, attempt, dependencies, claim.token, {
       status: 'terminal',
       code: error.classification === 'retryable' ? 'ATTEMPTS_EXHAUSTED' : code,
     });

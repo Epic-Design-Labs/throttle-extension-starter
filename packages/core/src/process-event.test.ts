@@ -26,7 +26,6 @@ const install: Installation = {
 const job: ConnectorJob = {
   jobId: 'j',
   installationId: 'i',
-  attempt: 1,
   createdAt: '2026-07-19T00:00:00.000Z',
   event: {
     id: 'evt',
@@ -73,6 +72,7 @@ function setup(
       claim: vi.fn(async () => ({
         status: 'claimed' as const,
         token: 'claim-token',
+        attempt: 1,
       })),
       finish: vi.fn(async (input) => {
         if (
@@ -178,7 +178,12 @@ describe('processConnectorEvent', () => {
       }),
     );
     await processConnectorEvent(job, f.deps);
-    await processConnectorEvent({ ...job, attempt: 2 }, f.deps);
+    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'claimed',
+      token: 'claim-token-2',
+      attempt: 2,
+    });
+    await processConnectorEvent(job, f.deps);
     expect(keys).toEqual(['["i","evt"]', '["i","evt"]']);
   });
   test('namespaces equal event IDs by installation without delimiter ambiguity', () => {
@@ -305,7 +310,12 @@ describe('processConnectorEvent', () => {
           throw new RetryableProviderError();
         }),
       );
-      expect(await processConnectorEvent({ ...job, attempt }, f.deps)).toEqual({
+      (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: 'claimed',
+        token: 'claim-token',
+        attempt,
+      });
+      expect(await processConnectorEvent(job, f.deps)).toEqual({
         status: 'retry',
         delaySeconds,
         code: 'RETRYABLE_PROVIDER_ERROR',
@@ -338,10 +348,16 @@ describe('processConnectorEvent', () => {
       code: 'INFRASTRUCTURE_ERROR',
     });
     expect(
-      await processConnectorEvent(
-        { ...job, attempt: MAX_JOB_ATTEMPTS },
-        f.deps,
-      ),
+      await (async () => {
+        (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue(
+          {
+            status: 'claimed',
+            token: 'claim-token-5',
+            attempt: MAX_JOB_ATTEMPTS,
+          },
+        );
+        return processConnectorEvent(job, f.deps);
+      })(),
     ).toEqual({ status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' });
     expect(JSON.stringify(f.activities)).not.toContain('raw provider');
   });
@@ -351,21 +367,35 @@ describe('processConnectorEvent', () => {
         throw new RetryableProviderError();
       }),
     );
-    expect(await processConnectorEvent({ ...job, attempt: 5 }, f.deps)).toEqual(
-      { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' },
-    );
+    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'claimed',
+      token: 'claim-token',
+      attempt: 5,
+    });
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'terminal',
+      code: 'ATTEMPTS_EXHAUSTED',
+    });
     expect(f.deps.connector.handleEvent).toHaveBeenCalledOnce();
   });
   test('rejects attempt six before any lookup, configuration, credential, or provider work', async () => {
     const f = setup(vi.fn(async () => undefined));
-    expect(await processConnectorEvent({ ...job, attempt: 6 }, f.deps)).toEqual(
-      { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' },
-    );
+    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'claimed',
+      token: 'claim-token',
+      attempt: 6,
+    });
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'terminal',
+      code: 'ATTEMPTS_EXHAUSTED',
+    });
     expect(f.deps.installations.getForJob).not.toHaveBeenCalled();
     expect(f.deps.configurations.get).not.toHaveBeenCalled();
     expect(f.deps.credentials.get).not.toHaveBeenCalled();
     expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
-    expect(f.deps.executions.finish).not.toHaveBeenCalled();
+    expect(f.deps.executions.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 6, status: 'failed' }),
+    );
     expect(f.activities).toMatchObject([
       {
         activityId: 'j:6',
