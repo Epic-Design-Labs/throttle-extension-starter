@@ -75,7 +75,25 @@ function setup(overrides: Partial<ConnectProviderDependencies> = {}) {
 
 describe('connectProvider', () => {
   test('validates owned credential bytes before storing and updates only the provider account reference', async () => {
-    const fixture = setup();
+    let validationReference: Uint8Array | undefined;
+    let storageReference: Uint8Array | undefined;
+    const fixture = setup({
+      connector: {
+        validateCredentials: vi.fn(async (bytes) => {
+          validationReference = bytes;
+          return { providerAccountReference: 'provider-account' };
+        }),
+        handleEvent: vi.fn(),
+      },
+      credentials: {
+        get: vi.fn(),
+        set: vi.fn(async (_id, _kind, bytes) => {
+          storageReference = bytes;
+          expect(bytes).not.toBe(validationReference);
+        }),
+        delete: vi.fn(),
+      },
+    });
     const caller = new TextEncoder().encode('valid-secret');
     const result = await connectProvider(
       {
@@ -89,8 +107,12 @@ describe('connectProvider', () => {
       },
       fixture.dependencies,
     );
-    expect(fixture.calls).toEqual(['validate', 'credential', 'installation']);
-    expect(new TextDecoder().decode(fixture.saved())).toBe('valid-secret');
+    expect(validationReference).not.toBe(caller);
+    expect(storageReference).not.toBe(caller);
+    expect(validationReference).not.toBe(storageReference);
+    expect(validationReference).toEqual(new Uint8Array('valid-secret'.length));
+    expect(storageReference).toEqual(new Uint8Array('valid-secret'.length));
+    expect(fixture.calls).toEqual(['installation']);
     expect(new TextDecoder().decode(caller)).toBe('valid-secret');
     expect(result.providerAccountReference).toBe('provider-account');
     expect(result.workspaceId).toBe('workspace-1');

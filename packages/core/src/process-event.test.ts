@@ -142,28 +142,24 @@ describe('processConnectorEvent', () => {
       });
     },
   );
-  test('maps retryable provider errors to bounded retry', async () => {
-    const f = setup(
-      vi.fn(async () => {
-        throw new RetryableProviderError();
-      }),
-    );
-    expect(await processConnectorEvent(job, f.deps)).toEqual({
-      status: 'retry',
-      delaySeconds: 5,
-      code: 'RETRYABLE_PROVIDER_ERROR',
-    });
-  });
-  test('supports zero-based first-attempt jobs', async () => {
-    const f = setup(
-      vi.fn(async () => {
-        throw new RetryableProviderError();
-      }),
-    );
-    expect(await processConnectorEvent({ ...job, attempt: 0 }, f.deps)).toEqual(
-      { status: 'retry', delaySeconds: 5, code: 'RETRYABLE_PROVIDER_ERROR' },
-    );
-  });
+  test.each([
+    [1, 5],
+    [4, 625],
+  ])(
+    'maps retryable provider errors on attempt %i to bounded retry',
+    async (attempt, delaySeconds) => {
+      const f = setup(
+        vi.fn(async () => {
+          throw new RetryableProviderError();
+        }),
+      );
+      expect(await processConnectorEvent({ ...job, attempt }, f.deps)).toEqual({
+        status: 'retry',
+        delaySeconds,
+        code: 'RETRYABLE_PROVIDER_ERROR',
+      });
+    },
+  );
   test('maps terminal provider errors without exposing their causes', async () => {
     const f = setup(
       vi.fn(async () => {
@@ -196,6 +192,35 @@ describe('processConnectorEvent', () => {
       ),
     ).toEqual({ status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' });
     expect(JSON.stringify(f.activities)).not.toContain('raw provider');
+  });
+  test('executes attempt five but exhausts a retryable result', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new RetryableProviderError();
+      }),
+    );
+    expect(await processConnectorEvent({ ...job, attempt: 5 }, f.deps)).toEqual(
+      { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' },
+    );
+    expect(f.deps.connector.handleEvent).toHaveBeenCalledOnce();
+  });
+  test('rejects attempt six before any lookup, configuration, credential, or provider work', async () => {
+    const f = setup(vi.fn(async () => undefined));
+    expect(await processConnectorEvent({ ...job, attempt: 6 }, f.deps)).toEqual(
+      { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' },
+    );
+    expect(f.deps.installations.getForJob).not.toHaveBeenCalled();
+    expect(f.deps.configurations.get).not.toHaveBeenCalled();
+    expect(f.deps.credentials.get).not.toHaveBeenCalled();
+    expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+    expect(f.activities).toMatchObject([
+      {
+        activityId: 'j:6',
+        attempt: 6,
+        result: 'terminal_failure',
+        code: 'ATTEMPTS_EXHAUSTED',
+      },
+    ]);
   });
   test('records a duplicate execution attempt idempotently', async () => {
     const f = setup();

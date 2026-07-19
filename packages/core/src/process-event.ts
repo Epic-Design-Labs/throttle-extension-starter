@@ -90,6 +90,11 @@ export async function processConnectorEvent(
   job: ConnectorJob,
   dependencies: ProcessConnectorEventDependencies,
 ): Promise<ProcessConnectorEventResult> {
+  if (job.attempt > MAX_JOB_ATTEMPTS)
+    return finish(job, dependencies, {
+      status: 'terminal',
+      code: 'ATTEMPTS_EXHAUSTED',
+    });
   const installation = await dependencies.installations.getForJob(
     job.installationId,
   );
@@ -147,7 +152,7 @@ export async function processConnectorEvent(
     if (error.classification === 'retryable' && job.attempt < MAX_JOB_ATTEMPTS)
       return finish(job, dependencies, {
         status: 'retry',
-        delaySeconds: retryDelaySeconds(Math.max(1, job.attempt)),
+        delaySeconds: retryDelaySeconds(job.attempt),
         code,
       });
     return finish(job, dependencies, {

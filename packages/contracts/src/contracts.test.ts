@@ -132,6 +132,7 @@ describe('connector job contract', () => {
 
   it('carries identifiers and event data', () => {
     expect(connectorJobSchema.parse(job)).toEqual(job);
+    expect(() => connectorJobSchema.parse({ ...job, attempt: 0 })).toThrow();
   });
 
   it.each([

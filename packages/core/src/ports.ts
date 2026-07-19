@@ -47,6 +47,10 @@ export interface CredentialStore {
     installationId: string,
     kind: CredentialKind,
   ): Promise<Uint8Array | undefined>;
+  /**
+   * Must copy or consume credentials before resolving. Implementations must
+   * never retain the caller-owned Uint8Array reference.
+   */
   set(
     installationId: string,
     kind: CredentialKind,

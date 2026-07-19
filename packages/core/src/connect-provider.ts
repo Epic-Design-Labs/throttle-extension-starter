@@ -33,19 +33,22 @@ export async function connectProvider(
     input.scope,
   );
   if (installation?.status !== 'active') throw new AuthorizationError();
-  const ownedCredentials = new Uint8Array(input.credentials);
+  const validationCredentials = new Uint8Array(input.credentials);
+  let storageCredentials: Uint8Array | undefined;
   try {
-    const validated =
-      await dependencies.connector.validateCredentials(ownedCredentials);
+    const validated = await dependencies.connector.validateCredentials(
+      validationCredentials,
+    );
     if (
       typeof validated.providerAccountReference !== 'string' ||
       validated.providerAccountReference.length === 0
     )
       throw new ValidationError();
+    storageCredentials = new Uint8Array(input.credentials);
     await dependencies.credentials.set(
       input.installationId,
       'providerCredentials',
-      ownedCredentials,
+      storageCredentials,
     );
     const connectedAt = dependencies.clock.now();
     const updated =
@@ -71,6 +74,7 @@ export async function connectProvider(
     });
     return updated;
   } finally {
-    ownedCredentials.fill(0);
+    validationCredentials.fill(0);
+    storageCredentials?.fill(0);
   }
 }
