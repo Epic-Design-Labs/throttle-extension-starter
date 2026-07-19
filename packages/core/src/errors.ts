@@ -93,3 +93,26 @@ export class InfrastructureError extends CoreError {
     super('A temporary infrastructure failure occurred.', options);
   }
 }
+
+export type AppError =
+  | ValidationError
+  | AuthenticationError
+  | AuthorizationError
+  | ConfigurationError
+  | RetryableProviderError
+  | TerminalProviderError
+  | InfrastructureError;
+
+const ACTIVITY_ERROR_CODES = {
+  validationError: 'VALIDATION_ERROR',
+  authenticationError: 'AUTHENTICATION_ERROR',
+  authorizationError: 'AUTHORIZATION_ERROR',
+  configurationError: 'CONFIGURATION_ERROR',
+  retryableProviderError: 'RETRYABLE_PROVIDER_ERROR',
+  terminalProviderError: 'TERMINAL_PROVIDER_ERROR',
+  infrastructureError: 'INFRASTRUCTURE_ERROR',
+} as const satisfies Record<AppError['code'], string>;
+
+export function toActivityErrorCode(error: AppError): string {
+  return ACTIVITY_ERROR_CODES[error.code];
+}

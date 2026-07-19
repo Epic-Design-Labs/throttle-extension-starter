@@ -4,7 +4,12 @@ export interface InstallationStore {
   get(installationId: string): Promise<Installation | undefined>;
   upsert(installation: Installation): Promise<Installation>;
   markUninstalled(installationId: string, uninstalledAt: Date): Promise<void>;
-  findCandidates(input: {
+  /**
+   * Returns a bounded candidate set using untrusted webhook routing hints.
+   * No returned installation is trusted until its per-install secret verifies
+   * the webhook. This lookup alone must never trigger provider work.
+   */
+  findWebhookVerificationCandidates(input: {
     workspaceId: string;
     environmentId: string;
   }): Promise<Installation[]>;

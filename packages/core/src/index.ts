@@ -5,9 +5,11 @@ export {
   InfrastructureError,
   RetryableProviderError,
   TerminalProviderError,
+  toActivityErrorCode,
   ValidationError,
 } from './errors.js';
 export type {
+  AppError,
   CoreErrorOptions,
   ErrorClassification,
   PublicErrorShape,

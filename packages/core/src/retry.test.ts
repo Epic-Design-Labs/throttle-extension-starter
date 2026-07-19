@@ -6,6 +6,7 @@ import type {
   Installation,
   ThrottleEvent,
 } from '@starter/contracts';
+import { activitySchema } from '@starter/contracts';
 
 import {
   AuthenticationError,
@@ -18,9 +19,11 @@ import {
   ValidationError,
   classifyProviderFailure,
   retryDelaySeconds,
+  toActivityErrorCode,
 } from './index.js';
 import type {
   ActivityStore,
+  AppError,
   Clock,
   CredentialStore,
   DeliveryStore,
@@ -124,6 +127,44 @@ describe('safe core errors', () => {
       classification: 'retryable',
     });
   });
+
+  it.each([
+    [new ValidationError(), 'VALIDATION_ERROR'],
+    [new AuthenticationError(), 'AUTHENTICATION_ERROR'],
+    [new AuthorizationError(), 'AUTHORIZATION_ERROR'],
+    [new ConfigurationError(), 'CONFIGURATION_ERROR'],
+    [new RetryableProviderError(), 'RETRYABLE_PROVIDER_ERROR'],
+    [new TerminalProviderError(), 'TERMINAL_PROVIDER_ERROR'],
+    [
+      new InfrastructureError({
+        cause: new Error('credential-do-not-serialize'),
+      }),
+      'INFRASTRUCTURE_ERROR',
+    ],
+  ] as const)(
+    'maps %s to an activity-safe code',
+    (error: AppError, expectedCode) => {
+      const code = toActivityErrorCode(error);
+      const activity = activitySchema.parse({
+        activityId: 'activity_1',
+        installationId: 'installation_1',
+        type: 'connector_sync',
+        status: 'completed',
+        result:
+          error.classification === 'retryable'
+            ? 'retryable_failure'
+            : 'terminal_failure',
+        attempt: 1,
+        code,
+        createdAt: '2026-07-19T00:00:00.000Z',
+      });
+
+      expect(code).toBe(expectedCode);
+      expect(activity.code).toBe(expectedCode);
+      expect(code).not.toContain(error.message);
+      expect(code).not.toContain('credential-do-not-serialize');
+    },
+  );
 });
 
 describe('portable ports', () => {
@@ -132,7 +173,7 @@ describe('portable ports', () => {
       get: async () => undefined,
       upsert: async (installation) => installation,
       markUninstalled: async () => undefined,
-      findCandidates: async () => [],
+      findWebhookVerificationCandidates: async () => [],
     };
     const credentialStore: CredentialStore = {
       get: async () => undefined,
