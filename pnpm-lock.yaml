@@ -38,6 +38,8 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/security: {}
+
 packages:
   '@emnapi/core@1.11.1':
     resolution:

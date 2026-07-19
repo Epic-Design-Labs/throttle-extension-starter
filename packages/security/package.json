@@ -1,0 +1,22 @@
+{
+  "name": "@starter/security",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "vitest run",
+    "test:consumer": "node --input-type=module -e \"const security = await import('@starter/security'); if (!security.encryptSecret || !security.redact) throw new Error('package root did not export security APIs')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
