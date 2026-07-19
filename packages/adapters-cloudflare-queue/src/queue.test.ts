@@ -34,10 +34,13 @@ describe('Cloudflare queue producer', () => {
   test('sends the exact stable, identifier-and-event-only payload', async () => {
     const queue = { send: vi.fn(async () => undefined) };
     await createCloudflareQueueProducer(queue).enqueue(job);
-    expect(queue.send).toHaveBeenCalledWith({
-      version: CONNECTOR_QUEUE_PAYLOAD_VERSION,
-      job,
-    });
+    expect(queue.send).toHaveBeenCalledWith(
+      {
+        version: CONNECTOR_QUEUE_PAYLOAD_VERSION,
+        job,
+      },
+      { contentType: 'json' },
+    );
     expect(JSON.stringify(queue.send.mock.calls)).not.toMatch(
       /credential|secret|ciphertext|token/iu,
     );
@@ -57,20 +60,26 @@ describe('Cloudflare queue producer', () => {
     },
   );
 
-  test('rejects oversized payloads before send', async () => {
-    const queue = { send: vi.fn(async () => undefined) };
-    const oversized = {
-      ...job,
-      event: {
-        ...job.event,
-        data: { value: 'x'.repeat(MAX_QUEUE_PAYLOAD_BYTES) },
-      },
-    };
-    await expect(
-      createCloudflareQueueProducer(queue).enqueue(oversized),
-    ).rejects.toThrow(/payload.*large/iu);
-    expect(queue.send).not.toHaveBeenCalled();
+  test('accepts the conservative serialized JSON byte budget exactly', async () => {
+    const queue = { send: vi.fn(async () => ({ outcome: 'ok' })) };
+    const exact = jobWithSerializedBytes(MAX_QUEUE_PAYLOAD_BYTES);
+    await createCloudflareQueueProducer(queue).enqueue(exact);
+    expect(serializedBytes(exact)).toBe(MAX_QUEUE_PAYLOAD_BYTES);
+    expect(queue.send).toHaveBeenCalledOnce();
   });
+
+  test.each([MAX_QUEUE_PAYLOAD_BYTES + 1, 127_999])(
+    'rejects serialized JSON payload of %i bytes before send',
+    async (bytes) => {
+      const queue = { send: vi.fn(async () => undefined) };
+      const oversized = jobWithSerializedBytes(bytes);
+      expect(serializedBytes(oversized)).toBe(bytes);
+      await expect(
+        createCloudflareQueueProducer(queue).enqueue(oversized),
+      ).rejects.toThrow(/payload.*large/iu);
+      expect(queue.send).not.toHaveBeenCalled();
+    },
+  );
 
   test('rejects malformed and non-cloneable inputs before send', async () => {
     const queue = { send: vi.fn(async () => undefined) };
@@ -122,6 +131,25 @@ describe('Cloudflare queue consumer', () => {
       expect(item.retry).toHaveBeenCalledOnce();
       expect(item.retry).toHaveBeenCalledWith({ delaySeconds });
       expect(item.ack).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([0, -1, 1.5, 43_201])(
+    'replaces invalid retry delay %s with a safe positive default',
+    async (delaySeconds) => {
+      const item = message(body);
+      await consumeConnectorQueue(
+        { messages: [item] },
+        {
+          processConnectorEvent: vi.fn(async () => ({
+            status: 'retry' as const,
+            code: 'INVALID_DELAY',
+            delaySeconds,
+          })),
+          logger: logger(),
+        },
+      );
+      expect(item.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
     },
   );
 
@@ -192,5 +220,24 @@ function logger() {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+  };
+}
+
+function serializedBytes(value: ConnectorJob): number {
+  return new TextEncoder().encode(
+    JSON.stringify({ version: CONNECTOR_QUEUE_PAYLOAD_VERSION, job: value }),
+  ).byteLength;
+}
+
+function jobWithSerializedBytes(bytes: number): ConnectorJob {
+  const empty = {
+    ...job,
+    event: { ...job.event, data: { value: '' } },
+  };
+  const paddingBytes = bytes - serializedBytes(empty);
+  if (paddingBytes < 0) throw new Error('requested payload is too small');
+  return {
+    ...empty,
+    event: { ...empty.event, data: { value: 'x'.repeat(paddingBytes) } },
   };
 }

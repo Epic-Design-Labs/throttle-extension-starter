@@ -25,7 +25,7 @@ export interface ConnectorQueueConsumerDependencies {
 
 function retryDelay(value: number): number {
   return Number.isInteger(value) &&
-    value >= 0 &&
+    value >= 1 &&
     value <= MAX_CLOUDFLARE_DELAY_SECONDS
     ? value
     : UNEXPECTED_RETRY_DELAY_SECONDS;

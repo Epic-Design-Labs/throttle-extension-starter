@@ -3,8 +3,11 @@ import type { JobQueue } from '@starter/core';
 import { z } from 'zod';
 
 export const CONNECTOR_QUEUE_PAYLOAD_VERSION = 1 as const;
-/** Cloudflare Queues' documented per-message limit is 128 KiB. */
-export const MAX_QUEUE_PAYLOAD_BYTES = 128 * 1024;
+/**
+ * Maximum serialized JSON body: 127,900 bytes. This leaves roughly 100 bytes
+ * below Cloudflare Queues' 128,000-byte total message limit for metadata.
+ */
+export const MAX_QUEUE_PAYLOAD_BYTES = 127_900;
 
 export const connectorQueuePayloadSchema = z
   .object({
@@ -14,8 +17,16 @@ export const connectorQueuePayloadSchema = z
   .strict();
 export type ConnectorQueuePayload = z.infer<typeof connectorQueuePayloadSchema>;
 
+export interface CloudflareQueueSendOptions {
+  contentType?: 'json';
+  delaySeconds?: number;
+}
+
 export interface CloudflareQueue {
-  send(body: ConnectorQueuePayload): Promise<void>;
+  send(
+    body: ConnectorQueuePayload,
+    options?: CloudflareQueueSendOptions,
+  ): Promise<unknown>;
 }
 
 export function createCloudflareQueueProducer(
@@ -36,7 +47,7 @@ export function createCloudflareQueueProducer(
       ).byteLength;
       if (bytes > MAX_QUEUE_PAYLOAD_BYTES)
         throw new Error('Queue payload is too large');
-      await queue.send(payload);
+      await queue.send(payload, { contentType: 'json' });
     },
   };
 }
