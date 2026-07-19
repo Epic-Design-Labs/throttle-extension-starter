@@ -1,9 +1,14 @@
 import { expect, it } from 'vitest';
+import { MAX_WEBHOOK_VERIFICATION_CANDIDATES as CONTRACT_MAX } from '@starter/contracts';
 import {
   MAX_WEBHOOK_BODY_BYTES,
   MAX_WEBHOOK_VERIFICATION_CANDIDATES,
   parseWebhookRoutingHint,
 } from './events.js';
+
+it('uses the shared candidate maximum', () => {
+  expect(MAX_WEBHOOK_VERIFICATION_CANDIDATES).toBe(CONTRACT_MAX);
+});
 
 it('package root does not expose internal bounded JSON parser types', async () => {
   const root: Record<string, unknown> = await import('./index.js');

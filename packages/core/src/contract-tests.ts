@@ -1,8 +1,11 @@
 import type { Activity, Installation } from '@starter/contracts';
+import { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from '@starter/contracts';
 import type {
   ActivityStore,
+  CredentialKind,
   CredentialStore,
   DeliveryStore,
+  InstallationScope,
   InstallationStore,
 } from './ports.js';
 
@@ -12,33 +15,43 @@ type Expect = (actual: unknown) => {
   toEqual(expected: unknown): void;
   toBeUndefined(): void;
   toHaveLength(expected: number): void;
-  not: {
-    toHaveProperty(expected: string): void;
-    toEqual(expected: unknown): void;
-  };
   rejects: { toThrow(expected?: unknown): Promise<void> };
 };
 
-interface TestDatabase {
-  prepare(query: string): {
-    bind(...values: unknown[]): {
-      run(): Promise<unknown>;
-      first<T = unknown>(): Promise<T | null>;
-    };
-  };
+export interface StoredSecretInspection {
+  algorithm: string;
+  keyVersion: number;
+  iv: string;
+  ciphertext: string;
+  containsPlaintext: boolean;
 }
-
+export interface PersistenceAdapterFixture {
+  installations: InstallationStore;
+  credentials: CredentialStore;
+  deliveries: DeliveryStore;
+  activities: ActivityStore;
+  inspectStoredSecret(
+    installationId: string,
+    kind: CredentialKind,
+  ): Promise<StoredSecretInspection | undefined>;
+  copyStoredSecretToInstallation(
+    sourceInstallationId: string,
+    targetInstallationId: string,
+    kind: CredentialKind,
+  ): Promise<void>;
+  seedJob(input: {
+    jobId: string;
+    installationId: string;
+    status: 'pending' | 'retry' | 'completed';
+  }): Promise<void>;
+  getJobStatus(jobId: string): Promise<string | undefined>;
+  cleanup(): Promise<void>;
+}
 export interface PersistenceAdapterContractFactory {
   describe(name: string, callback: () => void): void;
   test: TestFn;
   expect: Expect;
-  create(): Promise<{
-    installations: InstallationStore;
-    credentials: CredentialStore;
-    deliveries: DeliveryStore;
-    activities: ActivityStore;
-    database: TestDatabase;
-  }>;
+  create(): Promise<PersistenceAdapterFixture>;
 }
 
 const installation = (overrides: Partial<Installation> = {}): Installation => ({
@@ -53,6 +66,14 @@ const installation = (overrides: Partial<Installation> = {}): Installation => ({
   updatedAt: '2026-07-19T10:00:00.000Z',
   ...overrides,
 });
+const scope = (
+  overrides: Partial<InstallationScope> = {},
+): InstallationScope => ({
+  workspaceId: 'workspace-a',
+  applicationId: 'application-a',
+  environmentId: 'environment-a',
+  ...overrides,
+});
 
 export function runPersistenceAdapterContract(
   factory: PersistenceAdapterContractFactory,
@@ -60,7 +81,8 @@ export function runPersistenceAdapterContract(
   const { describe, test, expect } = factory;
   describe('persistence adapter contract', () => {
     test('round-trips strict installations and upserts replacements', async () => {
-      const { installations } = await factory.create();
+      const fixture = await factory.create();
+      const { installations } = fixture;
       const original = installation();
       expect(await installations.upsert(original)).toEqual(original);
       const replacement = installation({
@@ -68,54 +90,54 @@ export function runPersistenceAdapterContract(
         updatedAt: '2026-07-19T11:00:00.000Z',
       });
       expect(await installations.upsert(replacement)).toEqual(replacement);
-      expect(await installations.get(original.installationId)).toEqual(
+      expect(await installations.get(original.installationId, scope())).toEqual(
         replacement,
       );
-      expect(await installations.get('missing')).toBeUndefined();
+      expect(await installations.get('missing', scope())).toBeUndefined();
+      await fixture.cleanup();
     });
 
-    test('isolates normal reads by installation, workspace, environment, and application', async () => {
-      const { installations } = await factory.create();
-      await Promise.all([
-        installations.upsert(installation()),
-        installations.upsert(
-          installation({
-            installationId: 'other-workspace',
-            workspaceId: 'workspace-b',
-          }),
-        ),
-        installations.upsert(
-          installation({
-            installationId: 'other-environment',
-            environmentId: 'environment-b',
-          }),
-        ),
-        installations.upsert(
-          installation({
-            installationId: 'other-application',
-            applicationId: 'application-b',
-          }),
-        ),
-      ]);
-      expect(await installations.get('installation-a')).toEqual(installation());
-      expect(await installations.get('other-application')).toEqual(
-        installation({
-          installationId: 'other-application',
-          applicationId: 'application-b',
-        }),
+    test('requires exact workspace, application, and environment scope for ordinary reads', async () => {
+      const fixture = await factory.create();
+      const { installations } = fixture;
+      await installations.upsert(installation());
+      expect(await installations.get('installation-a', scope())).toEqual(
+        installation(),
       );
+      expect(
+        await installations.get(
+          'installation-a',
+          scope({ workspaceId: 'wrong' }),
+        ),
+      ).toBeUndefined();
+      expect(
+        await installations.get(
+          'installation-a',
+          scope({ applicationId: 'wrong' }),
+        ),
+      ).toBeUndefined();
+      expect(
+        await installations.get(
+          'installation-a',
+          scope({ environmentId: 'wrong' }),
+        ),
+      ).toBeUndefined();
+      await fixture.cleanup();
     });
 
-    test('webhook candidates use only workspace/environment, contain metadata only, and cap at 100', async () => {
-      const { installations } = await factory.create();
+    test('webhook candidates use only workspace/environment, are narrow, and cap at the shared maximum', async () => {
+      const fixture = await factory.create();
+      const { installations } = fixture;
       await Promise.all(
-        Array.from({ length: 105 }, (_, index) =>
-          installations.upsert(
-            installation({
-              installationId: `candidate-${String(index).padStart(3, '0')}`,
-              applicationId: `app-${index}`,
-            }),
-          ),
+        Array.from(
+          { length: MAX_WEBHOOK_VERIFICATION_CANDIDATES + 5 },
+          (_, index) =>
+            installations.upsert(
+              installation({
+                installationId: `candidate-${String(index).padStart(3, '0')}`,
+                applicationId: `app-${index}`,
+              }),
+            ),
         ),
       );
       await installations.upsert(
@@ -134,24 +156,27 @@ export function runPersistenceAdapterContract(
         workspaceId: 'workspace-a',
         environmentId: 'environment-a',
       });
-      expect(candidates).toHaveLength(100);
+      expect(candidates).toHaveLength(MAX_WEBHOOK_VERIFICATION_CANDIDATES);
       expect(
-        candidates.some((value) => value.applicationId !== 'application-a'),
+        candidates.every(
+          (candidate) =>
+            Object.keys(candidate).length === 1 &&
+            typeof candidate.installationId === 'string',
+        ),
       ).toBe(true);
       expect(
-        candidates.some((value) => value.installationId === 'wrong-workspace'),
-      ).toBe(false);
-      expect(
         candidates.some(
-          (value) => value.installationId === 'wrong-environment',
+          ({ installationId }) =>
+            installationId === 'wrong-workspace' ||
+            installationId === 'wrong-environment',
         ),
       ).toBe(false);
-      for (const candidate of candidates)
-        expect(candidate).not.toHaveProperty('secret');
+      await fixture.cleanup();
     });
 
     test('sets, replaces, gets and deletes encrypted credentials by installation and kind', async () => {
-      const { installations, credentials, database } = await factory.create();
+      const fixture = await factory.create();
+      const { installations, credentials } = fixture;
       await installations.upsert(installation());
       await installations.upsert(
         installation({ installationId: 'installation-b' }),
@@ -170,20 +195,21 @@ export function runPersistenceAdapterContract(
       expect(
         await credentials.get('installation-b', 'providerCredentials'),
       ).toBeUndefined();
-      const row = await database
-        .prepare('SELECT * FROM secrets WHERE installation_id = ? AND kind = ?')
-        .bind('installation-a', 'providerCredentials')
-        .first<Record<string, unknown>>();
-      expect(row).not.toHaveProperty('plaintext');
-      expect(Object.values(row ?? {}).includes('first secret')).toBe(false);
-      await database
-        .prepare(
-          `INSERT INTO secrets (installation_id, kind, algorithm, key_version, iv, ciphertext, created_at, updated_at)
-           SELECT ?, kind, algorithm, key_version, iv, ciphertext, created_at, updated_at
-           FROM secrets WHERE installation_id = ? AND kind = ?`,
-        )
-        .bind('installation-b', 'installation-a', 'providerCredentials')
-        .run();
+      const stored = await fixture.inspectStoredSecret(
+        'installation-a',
+        'providerCredentials',
+      );
+      expect(stored?.algorithm).toBe('A256GCM');
+      expect((stored?.keyVersion ?? 0) > 0).toBe(true);
+      expect((stored?.iv.length ?? 0) > 0).toBe(true);
+      expect((stored?.ciphertext.length ?? 0) > 0).toBe(true);
+      expect(stored?.ciphertext === 'first secret').toBe(false);
+      expect(stored?.containsPlaintext).toBe(false);
+      await fixture.copyStoredSecretToInstallation(
+        'installation-a',
+        'installation-b',
+        'providerCredentials',
+      );
       await expect(
         credentials.get('installation-b', 'providerCredentials'),
       ).rejects.toThrow('Unable to decrypt secret');
@@ -204,11 +230,12 @@ export function runPersistenceAdapterContract(
       await expect(
         credentials.set('missing', 'providerCredentials', new Uint8Array([1])),
       ).rejects.toThrow();
+      await fixture.cleanup();
     });
 
     test('accepts exactly one of two concurrent duplicate deliveries', async () => {
-      const { installations, deliveries } = await factory.create();
-      await installations.upsert(installation());
+      const fixture = await factory.create();
+      await fixture.installations.upsert(installation());
       const input = {
         installationId: 'installation-a',
         eventId: 'event-a',
@@ -216,15 +243,17 @@ export function runPersistenceAdapterContract(
         acceptedAt: new Date('2026-07-19T12:00:00.000Z'),
       };
       const results = await Promise.all([
-        deliveries.accept(input),
-        deliveries.accept(input),
+        fixture.deliveries.accept(input),
+        fixture.deliveries.accept(input),
       ]);
-      expect(results.filter((result) => result.accepted)).toHaveLength(1);
-      expect(results.filter((result) => !result.accepted)).toHaveLength(1);
+      expect(results.filter(({ accepted }) => accepted)).toHaveLength(1);
+      expect(results.filter(({ accepted }) => !accepted)).toHaveLength(1);
+      await fixture.cleanup();
     });
 
     test('lists bounded activity newest-first with stable id tie-break and installation isolation', async () => {
-      const { installations, activities } = await factory.create();
+      const fixture = await factory.create();
+      const { installations, activities } = fixture;
       await installations.upsert(installation());
       await installations.upsert(
         installation({ installationId: 'installation-b' }),
@@ -259,43 +288,52 @@ export function runPersistenceAdapterContract(
       await expect(
         activities.list({ installationId: 'installation-a', limit: 101 }),
       ).rejects.toThrow();
+      await fixture.cleanup();
     });
 
-    test('uninstall atomically removes secrets, cancels pending work, and is idempotent', async () => {
-      const { installations, credentials, database } = await factory.create();
+    test('scoped uninstall is atomic, idempotent, and cannot mutate another tenant', async () => {
+      const fixture = await factory.create();
+      const { installations, credentials } = fixture;
       await installations.upsert(installation());
       await credentials.set(
         'installation-a',
         'throttleApiKey',
         new Uint8Array([1, 2, 3]),
       );
-      const insert =
-        'INSERT INTO jobs (job_id, installation_id, payload_reference, attempt, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      for (const [id, status] of [
-        ['pending-job', 'pending'],
-        ['retry-job', 'retry'],
-        ['done-job', 'completed'],
-      ] as const)
-        await database
-          .prepare(insert)
-          .bind(
-            id,
-            'installation-a',
-            `ref-${id}`,
-            0,
-            status,
-            '2026-07-19T12:00:00.000Z',
-            '2026-07-19T12:00:00.000Z',
-            '2026-07-19T12:00:00.000Z',
-          )
-          .run();
+      await fixture.seedJob({
+        jobId: 'pending-job',
+        installationId: 'installation-a',
+        status: 'pending',
+      });
+      await fixture.seedJob({
+        jobId: 'retry-job',
+        installationId: 'installation-a',
+        status: 'retry',
+      });
+      await fixture.seedJob({
+        jobId: 'done-job',
+        installationId: 'installation-a',
+        status: 'completed',
+      });
       const when = new Date('2026-07-19T15:00:00.000Z');
-      await installations.markUninstalled('installation-a', when);
       await installations.markUninstalled(
         'installation-a',
+        scope({ applicationId: 'wrong' }),
+        when,
+      );
+      expect((await installations.get('installation-a', scope()))?.status).toBe(
+        'active',
+      );
+      expect(await credentials.get('installation-a', 'throttleApiKey')).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      await installations.markUninstalled('installation-a', scope(), when);
+      await installations.markUninstalled(
+        'installation-a',
+        scope(),
         new Date('2026-07-19T16:00:00.000Z'),
       );
-      expect(await installations.get('installation-a')).toEqual(
+      expect(await installations.get('installation-a', scope())).toEqual(
         installation({
           status: 'uninstalled',
           updatedAt: when.toISOString(),
@@ -305,30 +343,10 @@ export function runPersistenceAdapterContract(
       expect(
         await credentials.get('installation-a', 'throttleApiKey'),
       ).toBeUndefined();
-      expect(
-        (
-          await database
-            .prepare('SELECT status FROM jobs WHERE job_id = ?')
-            .bind('pending-job')
-            .first<{ status: string }>()
-        )?.status,
-      ).toBe('cancelled');
-      expect(
-        (
-          await database
-            .prepare('SELECT status FROM jobs WHERE job_id = ?')
-            .bind('retry-job')
-            .first<{ status: string }>()
-        )?.status,
-      ).toBe('cancelled');
-      expect(
-        (
-          await database
-            .prepare('SELECT status FROM jobs WHERE job_id = ?')
-            .bind('done-job')
-            .first<{ status: string }>()
-        )?.status,
-      ).toBe('completed');
+      expect(await fixture.getJobStatus('pending-job')).toBe('cancelled');
+      expect(await fixture.getJobStatus('retry-job')).toBe('cancelled');
+      expect(await fixture.getJobStatus('done-job')).toBe('completed');
+      await fixture.cleanup();
     });
   });
 }

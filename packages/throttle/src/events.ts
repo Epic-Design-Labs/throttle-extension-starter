@@ -1,4 +1,4 @@
-export const MAX_WEBHOOK_VERIFICATION_CANDIDATES = 100;
+export { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from '@starter/contracts';
 export const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
 export const MAX_WEBHOOK_JSON_DEPTH = 10;
 

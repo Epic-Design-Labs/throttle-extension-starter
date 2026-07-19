@@ -49,7 +49,57 @@ runPersistenceAdapterContract({
         rootKey: new Uint8Array(32).fill(7),
         keyVersion: 3,
       }),
-      database,
+      inspectStoredSecret: async (installationId, kind) => {
+        const row = await database
+          .prepare(
+            'SELECT algorithm, key_version, iv, ciphertext FROM secrets WHERE installation_id = ? AND kind = ?',
+          )
+          .bind(installationId, kind)
+          .first<{
+            algorithm: string;
+            key_version: number;
+            iv: string;
+            ciphertext: string;
+          }>();
+        return row === null
+          ? undefined
+          : {
+              algorithm: row.algorithm,
+              keyVersion: row.key_version,
+              iv: row.iv,
+              ciphertext: row.ciphertext,
+              containsPlaintext: Object.values(row).includes('first secret'),
+            };
+      },
+      copyStoredSecretToInstallation: async (
+        sourceInstallationId,
+        targetInstallationId,
+        kind,
+      ) => {
+        await database
+          .prepare(
+            `INSERT INTO secrets (installation_id, kind, algorithm, key_version, iv, ciphertext, created_at, updated_at) SELECT ?, kind, algorithm, key_version, iv, ciphertext, created_at, updated_at FROM secrets WHERE installation_id = ? AND kind = ?`,
+          )
+          .bind(targetInstallationId, sourceInstallationId, kind)
+          .run();
+      },
+      seedJob: async ({ jobId, installationId, status }) => {
+        const at = '2026-07-19T12:00:00.000Z';
+        await database
+          .prepare(
+            'INSERT INTO jobs (job_id, installation_id, payload_reference, attempt, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          )
+          .bind(jobId, installationId, `ref-${jobId}`, 0, status, at, at, at)
+          .run();
+      },
+      getJobStatus: async (jobId) =>
+        (
+          await database
+            .prepare('SELECT status FROM jobs WHERE job_id = ?')
+            .bind(jobId)
+            .first<{ status: string }>()
+        )?.status,
+      cleanup: async () => undefined,
     };
   },
 });

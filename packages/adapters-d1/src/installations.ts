@@ -1,8 +1,11 @@
-import { installationSchema, type Installation } from '@starter/contracts';
 import {
+  installationSchema,
   MAX_WEBHOOK_VERIFICATION_CANDIDATES,
-  type InstallationStore,
-} from '@starter/core';
+  webhookVerificationCandidateSchema,
+  type Installation,
+  type WebhookVerificationCandidate,
+} from '@starter/contracts';
+import { type InstallationScope, type InstallationStore } from '@starter/core';
 import type { D1Database } from './database.js';
 import { requireText } from './database.js';
 
@@ -36,10 +39,20 @@ const columns =
 
 export class D1InstallationStore implements InstallationStore {
   constructor(private readonly db: D1Database) {}
-  async get(installationId: string): Promise<Installation | undefined> {
+  async get(
+    installationId: string,
+    scope: InstallationScope,
+  ): Promise<Installation | undefined> {
     const row = await this.db
-      .prepare(`SELECT ${columns} FROM installations WHERE installation_id = ?`)
-      .bind(requireText(installationId, 'installationId'))
+      .prepare(
+        `SELECT ${columns} FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ?`,
+      )
+      .bind(
+        requireText(installationId, 'installationId'),
+        requireText(scope.workspaceId, 'workspaceId'),
+        requireText(scope.applicationId, 'applicationId'),
+        requireText(scope.environmentId, 'environmentId'),
+      )
       .first<Row>();
     return row === null ? undefined : map(row);
   }
@@ -64,15 +77,15 @@ export class D1InstallationStore implements InstallationStore {
         item.uninstalledAt ?? null,
       )
       .run();
-    return (await this.get(item.installationId))!;
+    return (await this.get(item.installationId, item))!;
   }
   async findWebhookVerificationCandidates(input: {
     workspaceId: string;
     environmentId: string;
-  }): Promise<Installation[]> {
+  }): Promise<WebhookVerificationCandidate[]> {
     const result = await this.db
       .prepare(
-        `SELECT ${columns} FROM installations WHERE workspace_id = ? AND environment_id = ? AND status != 'uninstalled' ORDER BY installation_id LIMIT ?`,
+        `SELECT installation_id FROM installations WHERE workspace_id = ? AND environment_id = ? AND status != 'uninstalled' ORDER BY installation_id LIMIT ?`,
       )
       .bind(
         requireText(input.workspaceId, 'workspaceId'),
@@ -80,11 +93,16 @@ export class D1InstallationStore implements InstallationStore {
         MAX_WEBHOOK_VERIFICATION_CANDIDATES,
       )
       .all<Row>();
-    return result.results.map(map);
+    return result.results.map((row) =>
+      webhookVerificationCandidateSchema.parse({
+        installationId: row.installation_id,
+      }),
+    );
   }
   /** D1 batch executes these statements as one transaction and rolls all back on failure. */
   async markUninstalled(
     installationId: string,
+    scope: InstallationScope,
     uninstalledAt: Date,
   ): Promise<void> {
     requireText(installationId, 'installationId');
@@ -97,17 +115,39 @@ export class D1InstallationStore implements InstallationStore {
     await this.db.batch([
       this.db
         .prepare(
-          `UPDATE installations SET status='uninstalled', updated_at=CASE WHEN status='uninstalled' THEN updated_at ELSE ? END, uninstalled_at=CASE WHEN status='uninstalled' THEN uninstalled_at ELSE ? END WHERE installation_id = ?`,
+          `UPDATE installations SET status='uninstalled', updated_at=CASE WHEN status='uninstalled' THEN updated_at ELSE ? END, uninstalled_at=CASE WHEN status='uninstalled' THEN uninstalled_at ELSE ? END WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ?`,
         )
-        .bind(timestamp, timestamp, installationId),
-      this.db
-        .prepare('DELETE FROM secrets WHERE installation_id = ?')
-        .bind(installationId),
+        .bind(
+          timestamp,
+          timestamp,
+          installationId,
+          requireText(scope.workspaceId, 'workspaceId'),
+          requireText(scope.applicationId, 'applicationId'),
+          requireText(scope.environmentId, 'environmentId'),
+        ),
       this.db
         .prepare(
-          `UPDATE jobs SET status='cancelled', updated_at=? WHERE installation_id=? AND status IN ('pending','retry')`,
+          "DELETE FROM secrets WHERE installation_id = ? AND EXISTS (SELECT 1 FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'uninstalled')",
         )
-        .bind(timestamp, installationId),
+        .bind(
+          installationId,
+          installationId,
+          scope.workspaceId,
+          scope.applicationId,
+          scope.environmentId,
+        ),
+      this.db
+        .prepare(
+          `UPDATE jobs SET status='cancelled', updated_at=? WHERE installation_id=? AND status IN ('pending','retry') AND EXISTS (SELECT 1 FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'uninstalled')`,
+        )
+        .bind(
+          timestamp,
+          installationId,
+          installationId,
+          scope.workspaceId,
+          scope.applicationId,
+          scope.environmentId,
+        ),
     ]);
   }
 }

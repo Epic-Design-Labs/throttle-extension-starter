@@ -5,6 +5,7 @@ import {
   connectorJobSchema,
   installationSchema,
   throttleEventSchema,
+  webhookVerificationCandidateSchema,
 } from './index.js';
 
 const createdAt = '2026-07-19T00:00:00.000Z';
@@ -63,6 +64,20 @@ describe('installation contract', () => {
   it('rejects unknown keys', () => {
     expect(() =>
       installationSchema.parse({ ...installation, region: 'west' }),
+    ).toThrow();
+  });
+});
+
+describe('webhook verification candidate contract', () => {
+  it('accepts only an installation identifier', () => {
+    expect(
+      webhookVerificationCandidateSchema.parse({ installationId: 'inst_1' }),
+    ).toEqual({ installationId: 'inst_1' });
+    expect(() =>
+      webhookVerificationCandidateSchema.parse({
+        installationId: 'inst_1',
+        signingSecret: 'must-not-leak',
+      }),
     ).toThrow();
   });
 });

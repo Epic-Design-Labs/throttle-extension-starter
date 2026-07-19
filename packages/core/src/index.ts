@@ -22,11 +22,12 @@ export type {
   CredentialKind,
   DeliveryStore,
   InstallationStore,
+  InstallationScope,
   JobQueue,
   LogFields,
   Logger,
 } from './ports.js';
-export { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from './ports.js';
+export { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from '@starter/contracts';
 export {
   classifyProviderFailure,
   MAX_JOB_ATTEMPTS,

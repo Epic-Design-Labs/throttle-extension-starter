@@ -1,11 +1,27 @@
-import type { Activity, ConnectorJob, Installation } from '@starter/contracts';
+import type {
+  Activity,
+  ConnectorJob,
+  Installation,
+  WebhookVerificationCandidate,
+} from '@starter/contracts';
 
-export const MAX_WEBHOOK_VERIFICATION_CANDIDATES = 100;
+export interface InstallationScope {
+  workspaceId: string;
+  applicationId: string;
+  environmentId: string;
+}
 
 export interface InstallationStore {
-  get(installationId: string): Promise<Installation | undefined>;
+  get(
+    installationId: string,
+    scope: InstallationScope,
+  ): Promise<Installation | undefined>;
   upsert(installation: Installation): Promise<Installation>;
-  markUninstalled(installationId: string, uninstalledAt: Date): Promise<void>;
+  markUninstalled(
+    installationId: string,
+    scope: InstallationScope,
+    uninstalledAt: Date,
+  ): Promise<void>;
   /**
    * Returns a bounded candidate set using untrusted webhook routing hints.
    * No returned installation is trusted until its per-install secret verifies
@@ -14,7 +30,7 @@ export interface InstallationStore {
   findWebhookVerificationCandidates(input: {
     workspaceId: string;
     environmentId: string;
-  }): Promise<Installation[]>;
+  }): Promise<WebhookVerificationCandidate[]>;
 }
 
 export interface CredentialStore {

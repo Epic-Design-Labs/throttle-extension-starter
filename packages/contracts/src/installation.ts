@@ -18,3 +18,12 @@ export const installationSchema = z
   .strict();
 
 export type Installation = z.infer<typeof installationSchema>;
+
+export const webhookVerificationCandidateSchema = z
+  .object({ installationId: z.string().min(1) })
+  .strict();
+export type WebhookVerificationCandidate = z.infer<
+  typeof webhookVerificationCandidateSchema
+>;
+
+export const MAX_WEBHOOK_VERIFICATION_CANDIDATES = 100;
