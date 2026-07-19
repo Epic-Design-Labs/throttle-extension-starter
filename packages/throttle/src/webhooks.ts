@@ -3,7 +3,9 @@ import { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from './events.js';
 
 const HEX_SHA256 = /^[0-9a-fA-F]{64}$/u;
 const DEFAULT_TOLERANCE_SECONDS = 300;
+/** Maximum accepted `v1` digests in one rotation-aware signature header. */
 export const MAX_WEBHOOK_V1_SIGNATURES = 8;
+/** Maximum UTF-8 byte length accepted for the complete signature header. */
 export const MAX_WEBHOOK_SIGNATURE_HEADER_BYTES = 1024;
 
 export interface WebhookCandidate {
@@ -32,6 +34,12 @@ export function constantTimeEqual(
   return difference === 0;
 }
 
+/**
+ * Verifies a bounded `X-Throttle-Signature` containing exactly one `t` and
+ * 1..MAX_WEBHOOK_V1_SIGNATURES `v1` digests. All candidate digests are
+ * constant-time compared so key rotation succeeds when any `v1` matches.
+ * Malformed, oversized, stale, or otherwise invalid input fails closed.
+ */
 export async function verifyWebhookSignature(input: {
   rawBody: unknown;
   signature: unknown;
