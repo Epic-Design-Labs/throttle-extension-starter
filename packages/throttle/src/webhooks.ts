@@ -3,6 +3,8 @@ import { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from './events.js';
 
 const HEX_SHA256 = /^[0-9a-fA-F]{64}$/u;
 const DEFAULT_TOLERANCE_SECONDS = 300;
+export const MAX_WEBHOOK_V1_SIGNATURES = 8;
+export const MAX_WEBHOOK_SIGNATURE_HEADER_BYTES = 1024;
 
 export interface WebhookCandidate {
   installationId: string;
@@ -44,6 +46,8 @@ export async function verifyWebhookSignature(input: {
       rawBody.length === 0 ||
       typeof signature !== 'string' ||
       signature.length === 0 ||
+      new TextEncoder().encode(signature).byteLength >
+        MAX_WEBHOOK_SIGNATURE_HEADER_BYTES ||
       typeof signingSecret !== 'string' ||
       signingSecret.length === 0
     )
@@ -68,6 +72,7 @@ export async function verifyWebhookSignature(input: {
       parts.some(([key]) => key !== 't' && key !== 'v1') ||
       timestamps.length !== 1 ||
       signatures.length === 0 ||
+      signatures.length > MAX_WEBHOOK_V1_SIGNATURES ||
       signatures.some((value) => !HEX_SHA256.test(value))
     )
       return false;
@@ -123,15 +128,18 @@ export async function verifyThrottleWebhook(input: {
     input.eventType.length === 0
   )
     return null;
-  let installationId: string | null = null;
-  for (const candidate of input.candidates) {
-    if (
-      typeof candidate?.installationId !== 'string' ||
-      candidate.installationId.length === 0 ||
-      typeof candidate.signingSecret !== 'string' ||
-      candidate.signingSecret.length === 0
+  if (
+    !input.candidates.every(
+      (candidate) =>
+        typeof candidate?.installationId === 'string' &&
+        candidate.installationId.length > 0 &&
+        typeof candidate.signingSecret === 'string' &&
+        candidate.signingSecret.length > 0,
     )
-      return null;
+  )
+    return null;
+  const matchingInstallationIds = new Set<string>();
+  for (const candidate of input.candidates) {
     if (
       await verifyWebhookSignature({
         rawBody: input.rawBody,
@@ -141,9 +149,10 @@ export async function verifyThrottleWebhook(input: {
         toleranceSeconds: input.toleranceSeconds,
       })
     )
-      installationId ??= candidate.installationId;
+      matchingInstallationIds.add(candidate.installationId);
   }
-  if (installationId === null) return null;
+  if (matchingInstallationIds.size !== 1) return null;
+  const installationId = matchingInstallationIds.values().next().value!;
   try {
     const event = throttleEventSchema.parse(JSON.parse(input.rawBody));
     return event.id === input.eventId && event.type === input.eventType

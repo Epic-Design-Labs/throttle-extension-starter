@@ -4,6 +4,7 @@ import { createExtensionIdentityVerifier } from './identity.js';
 
 let privateKey: CryptoKey;
 let verifier: ReturnType<typeof createExtensionIdentityVerifier>;
+const fixedNowSeconds = 1_800_000_000;
 const claims = {
   extensionId: 'ext_1',
   version: '1.0.0',
@@ -30,6 +31,7 @@ beforeAll(async () => {
   verifier = createExtensionIdentityVerifier({
     extensionId: 'ext_1',
     jwks: { keys: [jwk] },
+    currentDate: () => new Date(fixedNowSeconds * 1000),
   });
 });
 const token = async (overrides: Record<string, unknown> = {}, alg = 'RS256') =>
@@ -38,9 +40,9 @@ const token = async (overrides: Record<string, unknown> = {}, alg = 'RS256') =>
     .setIssuer('throttle')
     .setSubject('inst_1')
     .setAudience('ext_1')
-    .setIssuedAt()
-    .setNotBefore(Math.floor(Date.now() / 1000) - 1)
-    .setExpirationTime('10m')
+    .setIssuedAt(fixedNowSeconds)
+    .setNotBefore(fixedNowSeconds)
+    .setExpirationTime(fixedNowSeconds + 600)
     .sign(privateKey);
 
 it('verifies and narrows a valid extension identity', async () => {
@@ -66,6 +68,15 @@ it.each([
   ['empty scope', { scopes: [''] }],
   ['unsafe scope', { scopes: ['__proto__'] }],
   ['unknown claim field', { unexpected: true }],
+  [
+    'unknown environment kind',
+    { environment: { ...claims.environment, environmentKind: 'preview' } },
+  ],
+  [
+    'unknown provider environment',
+    { environment: { ...claims.environment, providerEnvironment: 'staging' } },
+  ],
+  ['unknown role', { role: 'owner' }],
 ])(
   'rejects %s',
   async (_name, overrides) =>
@@ -84,6 +95,14 @@ it('does not expose rejected claims through the authentication error', async () 
     expect('cause' in (error as object)).toBe(false);
   }
 });
+it('accepts and exposes an optional nonempty user name', async () => {
+  await expect(
+    verifier.verify(await token({ user: { ...claims.user, name: 'Ada' } })),
+  ).resolves.toMatchObject({ userName: 'Ada' });
+  await expect(
+    verifier.verify(await token({ user: { ...claims.user, name: '' } })),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
 it('rejects wrong issuer, audience, expiry, future nbf, and unknown kid', async () => {
   const base = new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'missing' })
@@ -99,13 +118,14 @@ it('rejects wrong issuer, audience, expiry, future nbf, and unknown kid', async 
     .setIssuer('throttle')
     .setSubject('inst_1')
     .setAudience('ext_1')
-    .setNotBefore(Math.floor(Date.now() / 1000) + 60)
-    .setExpirationTime('10m');
+    .setIssuedAt(fixedNowSeconds)
+    .setNotBefore(fixedNowSeconds + 60)
+    .setExpirationTime(fixedNowSeconds + 600);
   await expect(
     verifier.verify(await future.sign(privateKey)),
   ).rejects.toMatchObject({ code: 'authenticationError' });
 });
-it('requires standard expiration and issued-at claims', async () => {
+it('requires standard expiration, not-before, and issued-at claims', async () => {
   const missingTimes = new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
     .setIssuer('throttle')
@@ -113,5 +133,62 @@ it('requires standard expiration and issued-at claims', async () => {
     .setAudience('ext_1');
   await expect(
     verifier.verify(await missingTimes.sign(privateKey)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('enforces exact audience shape and fixed issuer configuration', async () => {
+  const multipleAudiences = new SignJWT(claims)
+    .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
+    .setIssuer('throttle')
+    .setSubject('inst_1')
+    .setAudience(['ext_1', 'other'])
+    .setIssuedAt(fixedNowSeconds)
+    .setNotBefore(fixedNowSeconds)
+    .setExpirationTime(fixedNowSeconds + 600);
+  await expect(
+    verifier.verify(await multipleAudiences.sign(privateKey)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+  const wrongIssuer = new SignJWT(claims)
+    .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
+    .setIssuer('other')
+    .setSubject('inst_1')
+    .setAudience('ext_1')
+    .setIssuedAt(fixedNowSeconds)
+    .setNotBefore(fixedNowSeconds)
+    .setExpirationTime(fixedNowSeconds + 600);
+  await expect(
+    verifier.verify(await wrongIssuer.sign(privateKey)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects a token missing only nbf', async () => {
+  const missingNbf = new SignJWT(claims)
+    .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
+    .setIssuer('throttle')
+    .setSubject('inst_1')
+    .setAudience('ext_1')
+    .setIssuedAt(fixedNowSeconds)
+    .setExpirationTime(fixedNowSeconds + 600);
+  await expect(
+    verifier.verify(await missingNbf.sign(privateKey)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('accepts iat/nbf boundaries and rejects old or future iat', async () => {
+  const timedToken = (issuedAt: number, notBefore: number) =>
+    new SignJWT(claims)
+      .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
+      .setIssuer('throttle')
+      .setSubject('inst_1')
+      .setAudience('ext_1')
+      .setIssuedAt(issuedAt)
+      .setNotBefore(notBefore)
+      .setExpirationTime(fixedNowSeconds + 600)
+      .sign(privateKey);
+  await expect(
+    verifier.verify(await timedToken(fixedNowSeconds - 600, fixedNowSeconds)),
+  ).resolves.toMatchObject({ installationId: 'inst_1' });
+  await expect(
+    verifier.verify(await timedToken(fixedNowSeconds - 601, fixedNowSeconds)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+  await expect(
+    verifier.verify(await timedToken(fixedNowSeconds + 1, fixedNowSeconds)),
   ).rejects.toMatchObject({ code: 'authenticationError' });
 });

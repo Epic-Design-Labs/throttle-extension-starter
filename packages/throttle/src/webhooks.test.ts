@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   constantTimeEqual,
+  MAX_WEBHOOK_SIGNATURE_HEADER_BYTES,
+  MAX_WEBHOOK_V1_SIGNATURES,
   verifyThrottleWebhook,
   verifyWebhookSignature,
 } from './webhooks.js';
@@ -72,6 +74,43 @@ describe('verifyWebhookSignature', () => {
       }),
     ).resolves.toBe(true);
   });
+  it('accepts the maximum v1 count and rejects any excess or oversized header', async () => {
+    const maximum = [
+      `t=${timestamp}`,
+      ...Array.from(
+        { length: MAX_WEBHOOK_V1_SIGNATURES - 1 },
+        () => `v1=${'0'.repeat(64)}`,
+      ),
+      `v1=${digest}`,
+    ].join(',');
+    await expect(
+      verifyWebhookSignature({
+        rawBody,
+        signature: maximum,
+        signingSecret: secret,
+        now: timestamp,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      verifyWebhookSignature({
+        rawBody,
+        signature: `${maximum},v1=${digest}`,
+        signingSecret: secret,
+        now: timestamp,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      verifyWebhookSignature({
+        rawBody,
+        signature: signature.padEnd(
+          MAX_WEBHOOK_SIGNATURE_HEADER_BYTES + 1,
+          '0',
+        ),
+        signingSecret: secret,
+        now: timestamp,
+      }),
+    ).resolves.toBe(false);
+  });
   it('fails closed for invalid runtime input', async () => {
     for (const value of ['', null, 1])
       await expect(
@@ -91,6 +130,60 @@ describe('verifyWebhookSignature', () => {
       false,
     );
   });
+});
+
+it('rejects malformed, excessive, and ambiguous candidates', async () => {
+  const base = {
+    rawBody,
+    signature,
+    eventId: 'evt_1',
+    eventType: 'deployment.created',
+    now: timestamp,
+  };
+  await expect(
+    verifyThrottleWebhook({
+      ...base,
+      candidates: [
+        { installationId: 'inst_1', signingSecret: secret },
+        { installationId: '', signingSecret: 'bad' },
+      ],
+    }),
+  ).resolves.toBeNull();
+  await expect(
+    verifyThrottleWebhook({
+      ...base,
+      candidates: [
+        { installationId: 'inst_1', signingSecret: secret },
+        { installationId: 'inst_2', signingSecret: secret },
+      ],
+    }),
+  ).resolves.toBeNull();
+  await expect(
+    verifyThrottleWebhook({
+      ...base,
+      candidates: [
+        { installationId: 'inst_1', signingSecret: secret },
+        { installationId: 'inst_1', signingSecret: secret },
+      ],
+    }),
+  ).resolves.toMatchObject({ installationId: 'inst_1' });
+});
+
+it('processes 100 candidates and can match the final candidate', async () => {
+  const candidates = Array.from({ length: 100 }, (_, index) => ({
+    installationId: `inst_${index}`,
+    signingSecret: index === 99 ? secret : `wrong_${index}`,
+  }));
+  await expect(
+    verifyThrottleWebhook({
+      rawBody,
+      signature,
+      eventId: 'evt_1',
+      eventType: 'deployment.created',
+      candidates,
+      now: timestamp,
+    }),
+  ).resolves.toMatchObject({ installationId: 'inst_99' });
 });
 
 it('returns a trusted event and matched installation only after header checks', async () => {

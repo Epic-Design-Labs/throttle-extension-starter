@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 export const DEFAULT_EXTENSION_JWKS_URL =
   'https://api.usethrottle.dev/.well-known/extension-jwks.json';
+const EXTENSION_ISSUER = 'throttle';
 const nonempty = z.string().min(1);
 const claimsSchema = z
   .object({
@@ -22,11 +23,11 @@ const claimsSchema = z
       .object({
         environmentId: nonempty,
         environmentSlug: nonempty,
-        environmentKind: nonempty,
-        providerEnvironment: nonempty,
+        environmentKind: z.enum(['production', 'non_production']),
+        providerEnvironment: z.enum(['production', 'sandbox']),
       })
       .strict(),
-    role: nonempty,
+    role: z.enum(['admin', 'developer', 'finance', 'viewer']),
     scopes: z
       .array(
         z
@@ -37,7 +38,9 @@ const claimsSchema = z
           ),
       )
       .max(100),
-    user: z.object({ id: nonempty, email: z.email() }).strict(),
+    user: z
+      .object({ id: nonempty, email: z.email(), name: nonempty.optional() })
+      .strict(),
   })
   .strict();
 
@@ -48,12 +51,13 @@ export interface VerifiedExtensionIdentity {
   workspaceId: string;
   applicationId: string;
   environmentId: string;
-  environmentKind: string;
-  providerEnvironment: string;
-  role: string;
+  environmentKind: 'production' | 'non_production';
+  providerEnvironment: 'production' | 'sandbox';
+  role: 'admin' | 'developer' | 'finance' | 'viewer';
   scopes: string[];
   userId: string;
   userEmail: string;
+  userName?: string;
 }
 export interface ExtensionIdentityVerifier {
   verify(token: unknown): Promise<VerifiedExtensionIdentity>;
@@ -61,17 +65,16 @@ export interface ExtensionIdentityVerifier {
 
 export function createExtensionIdentityVerifier(options: {
   extensionId: string;
-  issuer?: string;
   jwks?: JSONWebKeySet;
   jwksUrl?: string | URL;
   keyResolver?: JWTVerifyGetKey;
+  currentDate?: () => Date;
 }): ExtensionIdentityVerifier {
   if (
     typeof options.extensionId !== 'string' ||
     options.extensionId.length === 0
   )
     throw new Error('A non-empty extensionId is required');
-  const issuer = options.issuer ?? 'throttle';
   const resolver =
     options.keyResolver ??
     (options.jwks
@@ -84,11 +87,14 @@ export function createExtensionIdentityVerifier(options: {
       try {
         if (typeof token !== 'string' || token.length === 0) throw new Error();
         const { payload } = await jwtVerify(token, resolver, {
-          issuer,
+          issuer: EXTENSION_ISSUER,
           audience: options.extensionId,
           algorithms: ['RS256'],
-          requiredClaims: ['sub', 'exp', 'iat'],
+          requiredClaims: ['sub', 'exp', 'nbf', 'iat'],
           maxTokenAge: '10m',
+          ...(options.currentDate === undefined
+            ? {}
+            : { currentDate: options.currentDate() }),
         });
         const custom = claimsSchema.parse(
           Object.fromEntries(
@@ -102,6 +108,7 @@ export function createExtensionIdentityVerifier(options: {
         );
         if (
           payload.sub !== custom.installationId ||
+          payload.aud !== options.extensionId ||
           custom.extensionId !== options.extensionId ||
           new Set(custom.scopes).size !== custom.scopes.length
         )
@@ -119,6 +126,9 @@ export function createExtensionIdentityVerifier(options: {
           scopes: [...custom.scopes],
           userId: custom.user.id,
           userEmail: custom.user.email,
+          ...(custom.user.name === undefined
+            ? {}
+            : { userName: custom.user.name }),
         };
       } catch {
         throw new AuthenticationError();
