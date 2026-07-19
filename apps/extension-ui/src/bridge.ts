@@ -127,7 +127,10 @@ export function createExtensionBridge(
       rejectRefresh = reject;
     });
     refreshPromise = pending;
-    let timer: ReturnType<typeof setTimeout>;
+    const timer = setTimeout(
+      () => fail(new BridgeRefreshError('BRIDGE_REFRESH_TIMEOUT')),
+      refreshTimeoutMs,
+    );
     const cleanup = () => {
       window.removeEventListener('message', onSession);
       clearTimeout(timer);
@@ -139,10 +142,7 @@ export function createExtensionBridge(
       rejectRefresh(error);
     };
     const onSession = (event: MessageEvent) => {
-      if (
-        event.source !== window.parent ||
-        event.origin !== dashboardOrigin
-      )
+      if (event.source !== window.parent || event.origin !== dashboardOrigin)
         return;
       const data = event.data as Record<string, unknown> | null;
       if (
@@ -165,10 +165,6 @@ export function createExtensionBridge(
     };
     window.addEventListener('message', onSession);
     cancelRefresh = fail;
-    timer = setTimeout(
-      () => fail(new BridgeRefreshError('BRIDGE_REFRESH_TIMEOUT')),
-      refreshTimeoutMs,
-    );
     window.parent.postMessage(
       { source: BRIDGE_SOURCE_IFRAME, type: 'refresh' },
       dashboardOrigin,

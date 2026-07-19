@@ -458,8 +458,8 @@ describe('embedded connector management UI', () => {
 
   test('aborts an in-flight load on unmount and ignores its continuation', async () => {
     const pending = deferred<InstallationResponse>();
-    const getInstallation = vi.fn(
-      (_options?: { signal?: AbortSignal }) => pending.promise,
+    const getInstallation = vi.fn<BackendClient['getInstallation']>(
+      () => pending.promise,
     );
     const { bridge, unmount } = fixture({ client: { getInstallation } });
     await waitFor(() => expect(getInstallation).toHaveBeenCalledOnce());
@@ -519,9 +519,8 @@ describe('embedded connector management UI', () => {
       status: 'connected';
       installationId: string;
     }>();
-    const connectProvider = vi.fn(
-      (_credential: string, _options?: { signal?: AbortSignal }) =>
-        pending.promise,
+    const connectProvider = vi.fn<BackendClient['connectProvider']>(
+      () => pending.promise,
     );
     const { bridge, unmount } = fixture({
       client: {
