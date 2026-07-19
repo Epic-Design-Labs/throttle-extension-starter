@@ -130,6 +130,7 @@ describe('portable package boundaries', () => {
       '@starter/adapters-d1': ['./packages/adapters-d1/src/index.ts'],
       '@starter/contracts': ['./packages/contracts/src/index.ts'],
       '@starter/core': ['./packages/core/src/index.ts'],
+      '@starter/core/test-support': ['./packages/core/src/contract-tests.ts'],
       '@starter/demo-connector': ['./examples/demo-connector/src/index.ts'],
       '@starter/security': ['./packages/security/src/index.ts'],
       '@starter/throttle': ['./packages/throttle/src/index.ts'],
@@ -137,6 +138,51 @@ describe('portable package boundaries', () => {
     for (const [alias, [source]] of Object.entries(paths)) {
       expect(vitest).toContain(`'${alias}'`);
       expect(vitest).toContain(source!.replace(/^\.\//u, ''));
+    }
+  });
+
+  it('resolves every no-emit workspace typecheck from source without changing emit configs', async () => {
+    const noEmitConfigs = [
+      'packages/contracts/tsconfig.json',
+      'packages/core/tsconfig.json',
+      'packages/security/tsconfig.json',
+      'packages/throttle/tsconfig.json',
+      'packages/adapters-cloudflare-queue/tsconfig.json',
+      'packages/adapters-d1/tsconfig.json',
+      'examples/demo-connector/tsconfig.json',
+      'apps/cloudflare/tsconfig.json',
+      'apps/extension-ui/tsconfig.json',
+    ];
+    for (const path of noEmitConfigs) {
+      const config = JSON.parse(await readFile(path, 'utf8')) as {
+        extends?: unknown;
+        compilerOptions?: { noEmit?: unknown; rootDir?: unknown };
+      };
+      expect(config.compilerOptions?.noEmit).toBe(true);
+      expect(config.compilerOptions?.rootDir).toBe('../..');
+      expect(config.extends).toEqual(
+        expect.arrayContaining(['../../tsconfig.workspace-paths.json']),
+      );
+    }
+
+    for (const path of [
+      'packages/contracts/tsconfig.build.json',
+      'packages/core/tsconfig.build.json',
+      'packages/security/tsconfig.build.json',
+      'packages/throttle/tsconfig.build.json',
+      'packages/adapters-cloudflare-queue/tsconfig.build.json',
+      'packages/adapters-d1/tsconfig.build.json',
+      'examples/demo-connector/tsconfig.build.json',
+    ]) {
+      const config = JSON.parse(await readFile(path, 'utf8')) as {
+        extends?: unknown;
+        compilerOptions?: { noEmit?: unknown; rootDir?: unknown };
+      };
+      expect(config.extends).toBe('../../tsconfig.base.json');
+      expect(config.compilerOptions).toMatchObject({
+        noEmit: false,
+        rootDir: 'src',
+      });
     }
   });
 });

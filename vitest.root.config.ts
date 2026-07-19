@@ -12,6 +12,7 @@ export default defineConfig({
         ['@starter/adapters-d1', 'packages/adapters-d1/src/index.ts'],
         ['@starter/contracts', 'packages/contracts/src/index.ts'],
         ['@starter/core', 'packages/core/src/index.ts'],
+        ['@starter/core/test-support', 'packages/core/src/contract-tests.ts'],
         ['@starter/demo-connector', 'examples/demo-connector/src/index.ts'],
         ['@starter/security', 'packages/security/src/index.ts'],
         ['@starter/throttle', 'packages/throttle/src/index.ts'],

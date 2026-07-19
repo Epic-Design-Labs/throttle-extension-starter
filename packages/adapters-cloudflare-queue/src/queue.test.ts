@@ -90,7 +90,7 @@ describe('Cloudflare queue producer', () => {
       { ...job, createdAt: 'yesterday' },
     ])
       await expect(
-        createCloudflareQueueProducer(queue).enqueue(invalid),
+        createCloudflareQueueProducer(queue).enqueue(invalid as ConnectorJob),
       ).rejects.toThrow();
     expect(queue.send).not.toHaveBeenCalled();
   });

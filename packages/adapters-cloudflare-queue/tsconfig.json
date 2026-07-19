@@ -1,5 +1,12 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "outDir": "dist", "noEmit": true },
+  "extends": [
+    "../../tsconfig.base.json",
+    "../../tsconfig.workspace-paths.json"
+  ],
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "../..",
+    "noEmit": true
+  },
   "include": ["src/**/*.ts", "vitest.config.ts"]
 }

@@ -5,6 +5,7 @@
   ],
   "compilerOptions": {
     "types": ["@cloudflare/workers-types", "vitest/globals"],
+    "rootDir": "../..",
     "noEmit": true
   },
   "include": ["src/**/*.ts"]
