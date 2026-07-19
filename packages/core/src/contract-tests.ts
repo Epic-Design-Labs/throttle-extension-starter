@@ -124,6 +124,55 @@ export function runPersistenceAdapterContract(
       await fixture.cleanup();
     });
 
+    test('rejects initially uninstalled records because uninstall requires the atomic lifecycle path', async () => {
+      const fixture = await factory.create();
+      await expect(
+        fixture.installations.upsert(
+          installation({
+            status: 'uninstalled',
+            uninstalledAt: '2026-07-19T15:00:00.000Z',
+          }),
+        ),
+      ).rejects.toThrow();
+      expect(
+        await fixture.installations.get('installation-a', scope()),
+      ).toBeUndefined();
+      await fixture.cleanup();
+    });
+
+    test('rejects active-to-uninstalled upserts without changing status, secrets, or jobs', async () => {
+      const fixture = await factory.create();
+      const { installations, credentials } = fixture;
+      await installations.upsert(installation());
+      await credentials.set(
+        'installation-a',
+        'throttleApiKey',
+        new Uint8Array([1, 2, 3]),
+      );
+      await fixture.seedJob({
+        jobId: 'still-pending',
+        installationId: 'installation-a',
+        status: 'pending',
+      });
+      await expect(
+        installations.upsert(
+          installation({
+            status: 'uninstalled',
+            uninstalledAt: '2026-07-19T15:00:00.000Z',
+            updatedAt: '2026-07-19T15:00:00.000Z',
+          }),
+        ),
+      ).rejects.toThrow();
+      expect((await installations.get('installation-a', scope()))?.status).toBe(
+        'active',
+      );
+      expect(await credentials.get('installation-a', 'throttleApiKey')).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      expect(await fixture.getJobStatus('still-pending')).toBe('pending');
+      await fixture.cleanup();
+    });
+
     test('requires exact workspace, application, and environment scope for ordinary reads', async () => {
       const fixture = await factory.create();
       const { installations } = fixture;

@@ -58,6 +58,8 @@ export class D1InstallationStore implements InstallationStore {
   }
   async upsert(value: Installation): Promise<Installation> {
     const item = installationSchema.parse(value);
+    if (item.status === 'uninstalled')
+      throw new Error('Uninstall state requires markUninstalled');
     const result = await this.db
       .prepare(
         `INSERT INTO installations (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id) DO UPDATE SET environment_kind=excluded.environment_kind, extension_version=excluded.extension_version, provider_account_reference=excluded.provider_account_reference, status=excluded.status, last_successful_sync_cursor=excluded.last_successful_sync_cursor, updated_at=excluded.updated_at, uninstalled_at=excluded.uninstalled_at WHERE installations.status != 'uninstalled' AND installations.workspace_id=excluded.workspace_id AND installations.application_id=excluded.application_id AND installations.environment_id=excluded.environment_id AND installations.created_at=excluded.created_at`,
