@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { createQueueEntrypoint } from './index.js';
+import { InstallationBootstrapError } from '@starter/adapters-d1';
+import { createQueueEntrypoint, mapBootstrapError } from './index.js';
 
 const event = {
   id: 'event-1',
@@ -58,3 +59,15 @@ test('production queue entrypoint delegates every message independently', async 
   expect(ack1).toHaveBeenCalledOnce();
   expect(ack2).toHaveBeenCalledOnce();
 });
+
+test.each([
+  ['replace_required', 409, 'ROTATION_CONFIRMATION_REQUIRED'],
+  ['target_not_found', 409, 'ROTATION_TARGET_NOT_FOUND'],
+  ['scope_conflict', 403, 'INSTALLATION_SCOPE_CONFLICT'],
+] as const)(
+  'maps bootstrap %s to a stable response',
+  (reason, status, code) => {
+    const mapped = mapBootstrapError(new InstallationBootstrapError(reason));
+    expect(mapped).toMatchObject({ status, code });
+  },
+);

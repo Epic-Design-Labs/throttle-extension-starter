@@ -15,6 +15,7 @@ const timestamp = 1_767_225_600;
 const digest =
   'ccfa0262d8bd7bba53bf18ed39e92d97e61898341d4bf387e79ff2470c2c9368';
 const signature = `t=${timestamp},v1=${digest}`;
+const secretBytes = (value = secret) => new TextEncoder().encode(value);
 const signBody = async (body: string): Promise<string> => {
   const key = await crypto.subtle.importKey(
     'raw',
@@ -34,12 +35,24 @@ const signBody = async (body: string): Promise<string> => {
 };
 
 describe('verifyWebhookSignature', () => {
+  it('accepts byte secrets without mutating the caller-owned buffer', async () => {
+    const key = secretBytes();
+    await expect(
+      verifyWebhookSignature({
+        rawBody,
+        signature,
+        signingSecret: key,
+        now: timestamp,
+      }),
+    ).resolves.toBe(true);
+    expect(key).toEqual(secretBytes());
+  });
   it('accepts the exact signed raw body at the tolerance boundary', async () => {
     await expect(
       verifyWebhookSignature({
         rawBody,
         signature,
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp + 300,
       }),
     ).resolves.toBe(true);
@@ -59,7 +72,7 @@ describe('verifyWebhookSignature', () => {
       verifyWebhookSignature({
         rawBody: body,
         signature: header,
-        signingSecret: key,
+        signingSecret: secretBytes(key),
         now: timestamp,
       }),
     ).resolves.toBe(false);
@@ -69,7 +82,7 @@ describe('verifyWebhookSignature', () => {
       verifyWebhookSignature({
         rawBody,
         signature,
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp + 301,
       }),
     ).resolves.toBe(false);
@@ -77,7 +90,7 @@ describe('verifyWebhookSignature', () => {
       verifyWebhookSignature({
         rawBody,
         signature,
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp - 301,
       }),
     ).resolves.toBe(false);
@@ -87,7 +100,7 @@ describe('verifyWebhookSignature', () => {
       verifyWebhookSignature({
         rawBody,
         signature: `t=${timestamp},v1=${'0'.repeat(64)},v1=${digest}`,
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp,
       }),
     ).resolves.toBe(true);
@@ -105,7 +118,7 @@ describe('verifyWebhookSignature', () => {
       verifyWebhookSignature({
         rawBody,
         signature: maximum,
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp,
       }),
     ).resolves.toBe(true);
@@ -113,7 +126,7 @@ describe('verifyWebhookSignature', () => {
       verifyWebhookSignature({
         rawBody,
         signature: `${maximum},v1=${digest}`,
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp,
       }),
     ).resolves.toBe(false);
@@ -124,7 +137,7 @@ describe('verifyWebhookSignature', () => {
           MAX_WEBHOOK_SIGNATURE_HEADER_BYTES + 1,
           '0',
         ),
-        signingSecret: secret,
+        signingSecret: secretBytes(),
         now: timestamp,
       }),
     ).resolves.toBe(false);
@@ -135,7 +148,7 @@ describe('verifyWebhookSignature', () => {
         verifyWebhookSignature({
           rawBody: value as string,
           signature,
-          signingSecret: secret,
+          signingSecret: secretBytes(),
           now: timestamp,
         }),
       ).resolves.toBe(false);
@@ -162,8 +175,8 @@ it('rejects malformed, excessive, and ambiguous candidates', async () => {
     verifyThrottleWebhook({
       ...base,
       candidates: [
-        { installationId: 'inst_1', signingSecret: secret },
-        { installationId: '', signingSecret: 'bad' },
+        { installationId: 'inst_1', signingSecret: secretBytes() },
+        { installationId: '', signingSecret: secretBytes('bad') },
       ],
     }),
   ).resolves.toBeNull();
@@ -171,8 +184,8 @@ it('rejects malformed, excessive, and ambiguous candidates', async () => {
     verifyThrottleWebhook({
       ...base,
       candidates: [
-        { installationId: 'inst_1', signingSecret: secret },
-        { installationId: 'inst_2', signingSecret: secret },
+        { installationId: 'inst_1', signingSecret: secretBytes() },
+        { installationId: 'inst_2', signingSecret: secretBytes() },
       ],
     }),
   ).resolves.toBeNull();
@@ -180,8 +193,8 @@ it('rejects malformed, excessive, and ambiguous candidates', async () => {
     verifyThrottleWebhook({
       ...base,
       candidates: [
-        { installationId: 'inst_1', signingSecret: secret },
-        { installationId: 'inst_1', signingSecret: secret },
+        { installationId: 'inst_1', signingSecret: secretBytes() },
+        { installationId: 'inst_1', signingSecret: secretBytes() },
       ],
     }),
   ).resolves.toMatchObject({ installationId: 'inst_1' });
@@ -190,7 +203,7 @@ it('rejects malformed, excessive, and ambiguous candidates', async () => {
 it('processes 100 candidates and can match the final candidate', async () => {
   const candidates = Array.from({ length: 100 }, (_, index) => ({
     installationId: `inst_${index}`,
-    signingSecret: index === 99 ? secret : `wrong_${index}`,
+    signingSecret: secretBytes(index === 99 ? secret : `wrong_${index}`),
   }));
   await expect(
     verifyThrottleWebhook({
@@ -211,7 +224,7 @@ it('returns a trusted event and matched installation only after header checks', 
       signature,
       eventId: 'evt_1',
       eventType: 'deployment.created',
-      candidates: [{ installationId: 'inst_1', signingSecret: secret }],
+      candidates: [{ installationId: 'inst_1', signingSecret: secretBytes() }],
       now: timestamp,
     }),
   ).resolves.toMatchObject({
@@ -224,7 +237,7 @@ it('returns a trusted event and matched installation only after header checks', 
       signature,
       eventId: 'wrong',
       eventType: 'deployment.created',
-      candidates: [{ installationId: 'inst_1', signingSecret: secret }],
+      candidates: [{ installationId: 'inst_1', signingSecret: secretBytes() }],
       now: timestamp,
     }),
   ).resolves.toBeNull();
@@ -245,7 +258,7 @@ it('rejects an oversized body even when its signature and schema are valid', asy
       signature: await signBody(body),
       eventId: 'evt_big',
       eventType: 'big',
-      candidates: [{ installationId: 'inst_1', signingSecret: secret }],
+      candidates: [{ installationId: 'inst_1', signingSecret: secretBytes() }],
       now: timestamp,
     }),
   ).resolves.toBeNull();
@@ -269,7 +282,7 @@ it('rejects excessive JSON nesting even when its signature and schema are valid'
       signature: await signBody(body),
       eventId: 'evt_deep',
       eventType: 'deep',
-      candidates: [{ installationId: 'inst_1', signingSecret: secret }],
+      candidates: [{ installationId: 'inst_1', signingSecret: secretBytes() }],
       now: timestamp,
     }),
   ).resolves.toBeNull();

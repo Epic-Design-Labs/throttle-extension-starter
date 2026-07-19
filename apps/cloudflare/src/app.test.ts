@@ -1,7 +1,17 @@
 import type { Installation } from '@starter/contracts';
+import {
+  AuthenticationError,
+  AuthorizationError,
+  ConfigurationError,
+  InfrastructureError,
+  RetryableProviderError,
+  ValidationError,
+} from '@starter/core';
+import { createDemoProvider } from '@starter/demo-connector';
 import type { VerifiedExtensionIdentity } from '@starter/throttle';
 import { describe, expect, test, vi } from 'vitest';
 import { createApp, type AppDependencies } from './app.js';
+import { HttpError } from './middleware/errors.js';
 
 const now = new Date('2026-01-02T03:04:05.000Z');
 const identity: VerifiedExtensionIdentity = {
@@ -154,6 +164,33 @@ describe('worker HTTP application', () => {
     ).toBe(403);
   });
 
+  test('returns stable conflicts for every uninstalled installation route', async () => {
+    const uninstalled: Installation = {
+      ...installation,
+      status: 'uninstalled',
+      uninstalledAt: now.toISOString(),
+    };
+    const { app, deps } = fixture({
+      installations: {
+        get: vi.fn(async () => uninstalled),
+        findWebhookVerificationCandidates: vi.fn(async () => []),
+      },
+    });
+    for (const [path, method] of [
+      ['/api/installation', 'GET'],
+      ['/api/connector', 'GET'],
+      ['/api/activity', 'GET'],
+      ['/api/connector', 'DELETE'],
+    ] as const) {
+      const response = await app.request(path, { method, headers: auth });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: { code: 'INSTALLATION_UNINSTALLED' },
+      });
+    }
+    expect(deps.uninstall).not.toHaveBeenCalled();
+  });
+
   test('bootstraps transient secrets without returning or logging them', async () => {
     const { app, deps, log } = fixture();
     const response = await app.request(
@@ -177,6 +214,34 @@ describe('worker HTTP application', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain('super-secret');
   });
 
+  test('returns stable conflict for repeated bootstrap without replace', async () => {
+    const { app } = fixture({
+      bootstrap: vi.fn(async () => {
+        throw new HttpError(
+          409,
+          'ROTATION_CONFIRMATION_REQUIRED',
+          'Secret rotation requires explicit confirmation.',
+        );
+      }),
+    });
+    const response = await app.request(
+      'https://worker.example/api/installation/secrets',
+      {
+        method: 'PUT',
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          throttleApiKey: 'api-secret',
+          webhookSigningSecret: 'hook-secret',
+          replace: false,
+        }),
+      },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'ROTATION_CONFIRMATION_REQUIRED' },
+    });
+  });
+
   test('refuses secret bootstrap over plaintext HTTP', async () => {
     const { app, deps } = fixture();
     const response = await app.request(
@@ -193,6 +258,52 @@ describe('worker HTTP application', () => {
     );
     expect(response.status).toBe(400);
     expect(deps.bootstrap).not.toHaveBeenCalled();
+  });
+
+  test('rejects multibyte bootstrap secrets exceeding 8192 encoded bytes', async () => {
+    const { app, deps } = fixture();
+    const response = await app.request(
+      'https://worker.example/api/installation/secrets',
+      {
+        method: 'PUT',
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          throttleApiKey: '€'.repeat(3000),
+          webhookSigningSecret: 'hook-secret',
+          replace: false,
+        }),
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(deps.bootstrap).not.toHaveBeenCalled();
+  });
+
+  test('stream-caps generic JSON request bodies at 32 KiB', async () => {
+    const { app, deps } = fixture();
+    const response = await app.request('/api/connector/config', {
+      method: 'PUT',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: 'x'.repeat(32 * 1024 + 1),
+    });
+    expect(response.status).toBe(413);
+    expect(deps.configurations.set).not.toHaveBeenCalled();
+  });
+
+  test('rejects invalid UTF-8 in generic JSON bodies', async () => {
+    const { app, deps } = fixture();
+    const prefix = new TextEncoder().encode('{"value":"');
+    const suffix = new TextEncoder().encode('"}');
+    const body = new Uint8Array(prefix.length + 1 + suffix.length);
+    body.set(prefix);
+    body[prefix.length] = 0xff;
+    body.set(suffix, prefix.length + 1);
+    const response = await app.request('/api/connector/config', {
+      method: 'PUT',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body,
+    });
+    expect(response.status).toBe(400);
+    expect(deps.configurations.set).not.toHaveBeenCalled();
   });
 
   test('locks CORS to the configured HTTPS dashboard origin', async () => {
@@ -226,6 +337,80 @@ describe('worker HTTP application', () => {
     expect(response.status).toBe(400);
     expect(deps.bootstrap).not.toHaveBeenCalled();
   });
+
+  test('maps invalid demo credentials to a safe terminal provider response', async () => {
+    const demo = createDemoProvider();
+    const { app } = fixture({
+      connect: vi.fn(async ({ credentials }) => {
+        await demo.validateCredentials(credentials);
+        return installation;
+      }),
+    });
+    const response = await app.request('/api/connector/credentials', {
+      method: 'PUT',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ credentials: 'not-demo-valid' }),
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'PROVIDER_REJECTED',
+        message: 'The provider rejected the operation.',
+        requestId: 'request-safe-1',
+      },
+    });
+  });
+
+  test.each([
+    [
+      new ValidationError({ cause: new Error('cause-secret') }),
+      400,
+      'INVALID_REQUEST',
+    ],
+    [
+      new AuthenticationError({ cause: new Error('cause-secret') }),
+      401,
+      'AUTHENTICATION_FAILED',
+    ],
+    [
+      new AuthorizationError({ cause: new Error('cause-secret') }),
+      403,
+      'ACCESS_DENIED',
+    ],
+    [
+      new ConfigurationError({ cause: new Error('cause-secret') }),
+      422,
+      'CONFIGURATION_INVALID',
+    ],
+    [
+      new RetryableProviderError({ cause: new Error('cause-secret') }),
+      503,
+      'PROVIDER_UNAVAILABLE',
+    ],
+    [
+      new InfrastructureError({ cause: new Error('cause-secret') }),
+      503,
+      'INFRASTRUCTURE_UNAVAILABLE',
+    ],
+  ])(
+    'maps application errors without leaking causes',
+    async (error, status, code) => {
+      const { app } = fixture({
+        activities: {
+          list: vi.fn(async () => {
+            throw error;
+          }),
+        },
+      });
+      const response = await app.request('/api/activity', { headers: auth });
+      expect(response.status).toBe(status);
+      const body = await response.json<{
+        error: { code: string; message: string };
+      }>();
+      expect(body.error.code).toBe(code);
+      expect(JSON.stringify(body)).not.toContain('cause-secret');
+    },
+  );
 });
 
 async function signedWebhook(secret: string, event: object) {
@@ -264,6 +449,7 @@ describe('Throttle webhook ingress', () => {
   test('persists and enqueues one deterministic job for accepted and duplicate delivery', async () => {
     const secret = 'webhook-secret';
     const signed = await signedWebhook(secret, event);
+    const returnedSecrets: Uint8Array[] = [];
     const { app, deps } = fixture({
       clock: {
         now: vi
@@ -280,7 +466,11 @@ describe('Throttle webhook ingress', () => {
         ]),
       },
       credentials: {
-        get: vi.fn(async () => new TextEncoder().encode(secret)),
+        get: vi.fn(async () => {
+          const value = new TextEncoder().encode(secret);
+          returnedSecrets.push(value);
+          return value;
+        }),
       },
       acceptJob: vi
         .fn()
@@ -305,6 +495,10 @@ describe('Throttle webhook ingress', () => {
     expect(firstJob).toEqual(secondJob);
     expect(firstJob.jobId).toBe(JSON.stringify(['install-1', 'event-1']));
     expect(deps.queue.enqueue).toHaveBeenCalledTimes(2);
+    for (const returnedSecret of returnedSecrets)
+      expect([...returnedSecret]).toEqual(
+        new Array(returnedSecret.length).fill(0),
+      );
   });
 
   test('returns retryable 5xx when queue send fails and re-enqueues same job on retry', async () => {
@@ -371,6 +565,66 @@ describe('Throttle webhook ingress', () => {
       new Array(candidateSecret.length).fill(0),
     );
     expect(deps.acceptJob).not.toHaveBeenCalled();
+  });
+
+  test('fails safely when a candidate has no signing secret', async () => {
+    const { app, deps } = fixture({
+      installations: {
+        get: vi.fn(async () => installation),
+        findWebhookVerificationCandidates: vi.fn(async () => [
+          { installationId: 'install-1' },
+        ]),
+      },
+      credentials: { get: vi.fn(async () => undefined) },
+    });
+    const response = await app.request('/webhooks/throttle', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-throttle-signature': 'invalid',
+        'x-throttle-event-id': event.id,
+        'x-throttle-event-type': event.type,
+      },
+      body: JSON.stringify(event),
+    });
+    expect(response.status).toBe(401);
+    expect(deps.queue.enqueue).not.toHaveBeenCalled();
+  });
+
+  test('fails closed on ambiguous candidates and wipes every returned secret', async () => {
+    const signed = await signedWebhook('shared-secret', event);
+    const returned: Uint8Array[] = [];
+    const { app, deps } = fixture({
+      installations: {
+        get: vi.fn(async () => installation),
+        findWebhookVerificationCandidates: vi.fn(async () => [
+          { installationId: 'install-1' },
+          { installationId: 'install-2' },
+        ]),
+      },
+      credentials: {
+        get: vi.fn(async () => {
+          const value = new TextEncoder().encode('shared-secret');
+          returned.push(value);
+          return value;
+        }),
+      },
+    });
+    const response = await app.request('/webhooks/throttle', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-throttle-signature': signed.signature,
+        'x-throttle-event-id': event.id,
+        'x-throttle-event-type': event.type,
+      },
+      body: signed.body,
+    });
+    expect(response.status).toBe(401);
+    expect(returned).toHaveLength(2);
+    for (const secret of returned)
+      expect([...secret]).toEqual(new Array(secret.length).fill(0));
+    expect(deps.queue.enqueue).not.toHaveBeenCalled();
   });
 
   test('requires the JSON media type', async () => {

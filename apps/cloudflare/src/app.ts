@@ -17,9 +17,9 @@ import { Hono } from 'hono';
 import type { Variables } from './middleware/auth.js';
 import { parseBearer } from './middleware/auth.js';
 import {
-  HttpError,
   authenticationFailed,
   forbidden,
+  toHttpError,
 } from './middleware/errors.js';
 import { registerConnectorRoutes } from './routes/connector.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -138,10 +138,7 @@ export function createApp(dependencies: AppDependencies) {
     ),
   );
   app.onError((error, c) => {
-    const safe =
-      error instanceof HttpError
-        ? error
-        : new HttpError(500, 'INTERNAL_ERROR', 'A temporary error occurred.');
+    const safe = toHttpError(error);
     dependencies.logger.error('HTTP request failed', {
       code: safe.code,
       requestId: c.get('requestId'),

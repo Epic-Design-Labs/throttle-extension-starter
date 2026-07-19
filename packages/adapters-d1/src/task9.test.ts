@@ -186,6 +186,69 @@ test('rotation rejects unknown, uninstalled, and cross-tenant targets', async ()
     .run();
 });
 
+test('same-clock rotations persist distinct sanitized activities', async () => {
+  const ids = ['bootstrap-id', 'rotation-one', 'rotation-two'];
+  const store = new D1InstallationBootstrapStore(database, keyring, {
+    next: () => ids.shift()!,
+  });
+  const rotationInstallation = {
+    ...installation,
+    installationId: 'rotation-activity-install',
+  };
+  const secrets = (replace: boolean) => ({
+    installation: rotationInstallation,
+    throttleApiKey: new TextEncoder().encode(`api-${String(replace)}`),
+    webhookSigningSecret: new TextEncoder().encode(`hook-${String(replace)}`),
+    replace,
+    actorId: 'user-1',
+  });
+  await store.commit(secrets(false));
+  await store.commit(secrets(true));
+  await store.commit(secrets(true));
+  expect(
+    await database
+      .prepare(
+        "SELECT count(*) AS count FROM activities WHERE installation_id=? AND code='SECRETS_ROTATED'",
+      )
+      .bind(rotationInstallation.installationId)
+      .first<{ count: number }>(),
+  ).toEqual({ count: 2 });
+});
+
+test('activity id collision rolls back rotated secrets', async () => {
+  const store = new D1InstallationBootstrapStore(database, keyring, {
+    next: () => 'forced-collision',
+  });
+  const collisionInstallation = {
+    ...installation,
+    installationId: 'rotation-collision-install',
+  };
+  const commit = (replace: boolean, suffix: string) =>
+    store.commit({
+      installation: collisionInstallation,
+      throttleApiKey: new TextEncoder().encode(`api-${suffix}`),
+      webhookSigningSecret: new TextEncoder().encode(`hook-${suffix}`),
+      replace,
+      actorId: 'user-1',
+    });
+  await commit(false, 'original');
+  await commit(true, 'first-rotation');
+  const before = await database
+    .prepare(
+      "SELECT ciphertext FROM secrets WHERE installation_id=? AND kind='throttleApiKey'",
+    )
+    .bind(collisionInstallation.installationId)
+    .first<{ ciphertext: string }>();
+  await expect(commit(true, 'colliding-rotation')).rejects.toThrow();
+  const after = await database
+    .prepare(
+      "SELECT ciphertext FROM secrets WHERE installation_id=? AND kind='throttleApiKey'",
+    )
+    .bind(collisionInstallation.installationId)
+    .first<{ ciphertext: string }>();
+  expect(after).toEqual(before);
+});
+
 test('atomically persists a deterministic accepted job and makes duplicate retry safe', async () => {
   const store = new D1WebhookAcceptanceStore(database);
   expect(await store.accept(job)).toEqual({ accepted: true });

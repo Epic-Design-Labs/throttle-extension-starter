@@ -13,7 +13,7 @@ export const MAX_WEBHOOK_SIGNATURE_HEADER_BYTES = 1024;
 
 export interface WebhookCandidate {
   installationId: string;
-  signingSecret: string;
+  signingSecret: Uint8Array;
 }
 export interface VerifiedThrottleWebhook {
   installationId: string;
@@ -59,8 +59,8 @@ export async function verifyWebhookSignature(input: {
       signature.length === 0 ||
       new TextEncoder().encode(signature).byteLength >
         MAX_WEBHOOK_SIGNATURE_HEADER_BYTES ||
-      typeof signingSecret !== 'string' ||
-      signingSecret.length === 0
+      !(signingSecret instanceof Uint8Array) ||
+      signingSecret.byteLength === 0
     )
       return false;
     const now = input.now ?? Math.floor(Date.now() / 1000);
@@ -96,24 +96,31 @@ export async function verifyWebhookSignature(input: {
       Math.abs(now - timestamp) > tolerance
     )
       return false;
-    const key = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(signingSecret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign'],
+    const ownedSecret = new Uint8Array(signingSecret);
+    const signedPayload = new TextEncoder().encode(
+      `${timestampText}.${rawBody}`,
     );
-    const expected = new Uint8Array(
-      await crypto.subtle.sign(
-        'HMAC',
-        key,
-        new TextEncoder().encode(`${timestampText}.${rawBody}`),
-      ),
-    );
-    let matched = false;
-    for (const candidate of signatures)
-      matched = constantTimeEqual(expected, decodeHex(candidate)) || matched;
-    return matched;
+    let expected: Uint8Array | undefined;
+    try {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        ownedSecret,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign'],
+      );
+      expected = new Uint8Array(
+        await crypto.subtle.sign('HMAC', key, signedPayload),
+      );
+      let matched = false;
+      for (const candidate of signatures)
+        matched = constantTimeEqual(expected, decodeHex(candidate)) || matched;
+      return matched;
+    } finally {
+      ownedSecret.fill(0);
+      signedPayload.fill(0);
+      expected?.fill(0);
+    }
   } catch {
     return false;
   }
@@ -146,8 +153,8 @@ export async function verifyThrottleWebhook(input: {
       (candidate) =>
         typeof candidate?.installationId === 'string' &&
         candidate.installationId.length > 0 &&
-        typeof candidate.signingSecret === 'string' &&
-        candidate.signingSecret.length > 0,
+        candidate.signingSecret instanceof Uint8Array &&
+        candidate.signingSecret.byteLength > 0,
     )
   )
     return null;

@@ -20,10 +20,17 @@ export class InstallationBootstrapError extends Error {
   }
 }
 
+export interface IdGenerator {
+  next(): string;
+}
+
 export class D1InstallationBootstrapStore {
   constructor(
     private readonly db: D1Database,
     private readonly keyring: CredentialKeyring,
+    private readonly idGenerator: IdGenerator = {
+      next: () => crypto.randomUUID(),
+    },
   ) {}
 
   async commit(input: {
@@ -76,6 +83,8 @@ export class D1InstallationBootstrapStore {
         ),
       ]);
       const at = item.updatedAt;
+      const activityNonce = this.idGenerator.next();
+      if (!activityNonce) throw new Error('Activity ID generation failed');
       const installStatement =
         existing === null
           ? this.db
@@ -134,20 +143,24 @@ export class D1InstallationBootstrapStore {
           .bind(item.installationId, at),
         this.db
           .prepare(
-            "INSERT OR IGNORE INTO activities (activity_id,installation_id,event_id,job_id,type,status,result,attempt,message,code,created_at) VALUES (?, ?, NULL, NULL, 'connector_sync', 'completed', 'success', 0, NULL, ?, ?)",
+            "INSERT INTO activities (activity_id,installation_id,event_id,job_id,type,status,result,attempt,message,code,created_at) VALUES (?, ?, NULL, NULL, 'connector_sync', 'completed', 'success', 0, NULL, ?, ?)",
           )
           .bind(
             JSON.stringify([
               input.replace ? 'secrets_rotated' : 'installation_bootstrapped',
               item.installationId,
-              at,
+              activityNonce,
             ]),
             item.installationId,
             input.replace ? 'SECRETS_ROTATED' : 'INSTALLATION_BOOTSTRAPPED',
             at,
           ),
       ]);
-      if (results.slice(0, 3).some((result) => result.meta.changes !== 1))
+      if (
+        [results[0], results[1], results[2], results[4]].some(
+          (result) => result?.meta.changes !== 1,
+        )
+      )
         throw new Error('Bootstrap transaction did not persist every record');
       return { ...item, createdAt: existing?.created_at ?? item.createdAt };
     } finally {

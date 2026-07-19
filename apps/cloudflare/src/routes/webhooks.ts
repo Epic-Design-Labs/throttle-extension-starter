@@ -7,55 +7,9 @@ import {
 } from '@starter/throttle';
 import type { Hono } from 'hono';
 import type { AppBindings, AppDependencies } from '../app.js';
+import { readBoundedUtf8Body } from '../middleware/body.js';
 import { isJsonContentType } from '../middleware/content-type.js';
 import { HttpError, invalidRequest } from '../middleware/errors.js';
-
-const decoder = new TextDecoder('utf-8', { fatal: true });
-
-async function readBoundedRawBody(request: Request): Promise<string> {
-  const contentLength = request.headers.get('content-length');
-  if (
-    contentLength !== null &&
-    (!/^[0-9]+$/u.test(contentLength) ||
-      Number(contentLength) > MAX_WEBHOOK_BODY_BYTES)
-  )
-    throw new HttpError(
-      413,
-      'WEBHOOK_BODY_TOO_LARGE',
-      'The request is too large.',
-    );
-  if (request.body === null) throw invalidRequest();
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_WEBHOOK_BODY_BYTES) {
-      await reader.cancel();
-      throw new HttpError(
-        413,
-        'WEBHOOK_BODY_TOO_LARGE',
-        'The request is too large.',
-      );
-    }
-    chunks.push(value);
-  }
-  const rawBytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    rawBytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return decoder.decode(rawBytes);
-  } catch {
-    throw invalidRequest();
-  } finally {
-    rawBytes.fill(0);
-  }
-}
 
 export function registerWebhookRoutes(
   app: Hono<AppBindings>,
@@ -64,7 +18,11 @@ export function registerWebhookRoutes(
   app.post('/webhooks/throttle', async (c) => {
     if (!isJsonContentType(c.req.header('content-type')))
       throw new HttpError(415, 'UNSUPPORTED_MEDIA_TYPE', 'JSON is required.');
-    const rawBody = await readBoundedRawBody(c.req.raw);
+    const rawBody = await readBoundedUtf8Body({
+      request: c.req.raw,
+      maxBytes: MAX_WEBHOOK_BODY_BYTES,
+      tooLargeCode: 'WEBHOOK_BODY_TOO_LARGE',
+    });
     const hint = parseWebhookRoutingHint(rawBody);
     if (hint === null) throw invalidRequest();
     let candidates;
@@ -94,7 +52,7 @@ export function registerWebhookRoutes(
     try {
       const verificationCandidates: Array<{
         installationId: string;
-        signingSecret: string;
+        signingSecret: Uint8Array;
       }> = [];
       for (const candidate of candidates) {
         const secret = await dependencies.credentials.get(
@@ -103,14 +61,10 @@ export function registerWebhookRoutes(
         );
         if (!secret) continue;
         buffers.push(secret);
-        try {
-          verificationCandidates.push({
-            installationId: candidate.installationId,
-            signingSecret: decoder.decode(secret),
-          });
-        } catch {
-          // Corrupt credentials never become verification candidates.
-        }
+        verificationCandidates.push({
+          installationId: candidate.installationId,
+          signingSecret: secret,
+        });
       }
       const verified = await verifyThrottleWebhook({
         rawBody,

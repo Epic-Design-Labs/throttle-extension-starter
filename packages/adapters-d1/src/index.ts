@@ -8,6 +8,7 @@ import { D1JobExecutionStore } from './executions.js';
 import { D1ProviderConnectionStore } from './connections.js';
 import { D1ConfigurationStore } from './configurations.js';
 import { D1InstallationBootstrapStore } from './bootstrap.js';
+import type { IdGenerator } from './bootstrap.js';
 import { D1WebhookAcceptanceStore } from './webhook-acceptance.js';
 
 export type { D1Database, D1PreparedStatement, D1Result } from './database.js';
@@ -20,6 +21,7 @@ export { D1ProviderConnectionStore } from './connections.js';
 export { D1ConfigurationStore } from './configurations.js';
 export { D1InstallationBootstrapStore } from './bootstrap.js';
 export { InstallationBootstrapError } from './bootstrap.js';
+export type { IdGenerator } from './bootstrap.js';
 export { D1WebhookAcceptanceStore } from './webhook-acceptance.js';
 export {
   D1InstallationStore,
@@ -29,6 +31,7 @@ export {
 export function createD1Adapters(input: {
   database: D1Database;
   credentialKeys: CredentialKeyring;
+  idGenerator?: IdGenerator;
 }) {
   return {
     installations: new D1InstallationStore(input.database),
@@ -44,6 +47,7 @@ export function createD1Adapters(input: {
     bootstrap: new D1InstallationBootstrapStore(
       input.database,
       input.credentialKeys,
+      input.idGenerator,
     ),
     webhookAcceptance: new D1WebhookAcceptanceStore(input.database),
   };

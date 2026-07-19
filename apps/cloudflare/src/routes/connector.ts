@@ -2,8 +2,9 @@ import type { ConfigurationValue } from '@starter/core';
 import type { Hono } from 'hono';
 import type { AppBindings, AppDependencies } from '../app.js';
 import { identity, requireMutationRole } from '../middleware/auth.js';
+import { readBoundedUtf8Body } from '../middleware/body.js';
 import { isJsonContentType } from '../middleware/content-type.js';
-import { forbidden, invalidRequest } from '../middleware/errors.js';
+import { HttpError, forbidden, invalidRequest } from '../middleware/errors.js';
 
 const MAX_BODY_BYTES = 32 * 1024;
 const encoder = new TextEncoder();
@@ -25,7 +26,19 @@ async function activeInstallation(
     current.installationId,
     scope(current),
   );
-  if (installation?.status !== 'active') throw forbidden();
+  if (!installation) throw forbidden();
+  if (installation.status === 'uninstalled')
+    throw new HttpError(
+      409,
+      'INSTALLATION_UNINSTALLED',
+      'The installation is uninstalled.',
+    );
+  if (installation.status !== 'active')
+    throw new HttpError(
+      409,
+      'INSTALLATION_INACTIVE',
+      'The installation is not active.',
+    );
   return installation;
 }
 
@@ -46,9 +59,12 @@ function safeJson(value: unknown): value is ConfigurationValue {
 
 async function jsonBody(c: Parameters<typeof identity>[0]): Promise<unknown> {
   if (!isJsonContentType(c.req.header('content-type'))) throw invalidRequest();
-  const text = await c.req.text();
-  if (!text || encoder.encode(text).byteLength > MAX_BODY_BYTES)
-    throw invalidRequest();
+  const text = await readBoundedUtf8Body({
+    request: c.req.raw,
+    maxBytes: MAX_BODY_BYTES,
+    tooLargeCode: 'REQUEST_BODY_TOO_LARGE',
+  });
+  if (!text) throw invalidRequest();
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -66,6 +82,12 @@ export function registerConnectorRoutes(
       current.installationId,
       scope(current),
     );
+    if (installation?.status === 'uninstalled')
+      throw new HttpError(
+        409,
+        'INSTALLATION_UNINSTALLED',
+        'The installation is uninstalled.',
+      );
     return c.json({ status: installation?.status ?? 'not_configured' });
   });
 
@@ -93,6 +115,8 @@ export function registerConnectorRoutes(
     const apiKey = encoder.encode(value.throttleApiKey);
     const signingSecret = encoder.encode(value.webhookSigningSecret);
     try {
+      if (apiKey.byteLength > 8192 || signingSecret.byteLength > 8192)
+        throw invalidRequest();
       const result = await dependencies.bootstrap({
         identity: current,
         throttleApiKey: apiKey,

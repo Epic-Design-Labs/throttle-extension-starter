@@ -53,11 +53,32 @@ export function createQueueEntrypoint(
     consumeConnectorQueue(batch, dependencies);
 }
 
+export function mapBootstrapError(
+  error: InstallationBootstrapError,
+): HttpError {
+  if (error.reason === 'scope_conflict')
+    return new HttpError(
+      403,
+      'INSTALLATION_SCOPE_CONFLICT',
+      'Access is not permitted.',
+    );
+  return new HttpError(
+    409,
+    error.reason === 'replace_required'
+      ? 'ROTATION_CONFIRMATION_REQUIRED'
+      : 'ROTATION_TARGET_NOT_FOUND',
+    error.reason === 'replace_required'
+      ? 'Secret rotation requires explicit confirmation.'
+      : 'The rotation target was not found.',
+  );
+}
+
 export function composeWorker(rawEnv: Env) {
   const env = validateEnv(rawEnv);
   const adapters = createD1Adapters({
     database: env.database,
     credentialKeys: env.keyring,
+    idGenerator: { next: () => crypto.randomUUID() },
   });
   const connector = createDemoProvider();
   const safeLogger = logger();
@@ -107,21 +128,7 @@ export function composeWorker(rawEnv: Env) {
         });
       } catch (error) {
         if (!(error instanceof InstallationBootstrapError)) throw error;
-        if (error.reason === 'scope_conflict')
-          throw new HttpError(
-            403,
-            'INSTALLATION_SCOPE_CONFLICT',
-            'Access is not permitted.',
-          );
-        throw new HttpError(
-          409,
-          error.reason === 'replace_required'
-            ? 'ROTATION_CONFIRMATION_REQUIRED'
-            : 'ROTATION_TARGET_NOT_FOUND',
-          error.reason === 'replace_required'
-            ? 'Secret rotation requires explicit confirmation.'
-            : 'The rotation target was not found.',
-        );
+        throw mapBootstrapError(error);
       }
     },
     acceptJob: (job) => adapters.webhookAcceptance.accept(job),
