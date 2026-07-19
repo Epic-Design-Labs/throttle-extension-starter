@@ -15,6 +15,7 @@ The starter prioritizes a fast path to a working deployment without coupling ext
 - Demonstrate secure credential storage, verified identity, signed webhooks, idempotency, retries, and observable failures.
 - Serve as a GitHub template with a setup command for renaming and tailoring a new extension.
 - Give provider adapters, such as the future ShipStation adapter, clear and testable boundaries.
+- Provide a complete root README that lets a developer or coding agent understand, configure, run, test, customize, secure, and deploy the starter without access to Throttle's private repositories.
 
 ## Non-goals
 
@@ -32,6 +33,8 @@ The starter supports both Throttle extension surfaces:
 2. A backend receives signed Throttle events, acknowledges them promptly, and performs durable asynchronous processing even when the iframe is closed.
 
 An extension created from the starter may remove either surface when it only needs one. The demo exercises both so the complete contract remains tested.
+
+Tutorials, sample configuration, fixtures, and default setup target a Throttle Test-mode environment. Moving to production is a separate, explicitly documented transition with its own preflight checks.
 
 ## Repository Architecture
 
@@ -134,14 +137,14 @@ Cryptography and identity verification use included secure implementations behin
 
 The exact schema will be finalized in the implementation plan, but both database adapters must support equivalent records for:
 
-- Installations and Throttle environment identity
+- Installations keyed by `installationId`, including workspace, application, environment or mode, extension version, provider account reference, status, created and updated timestamps, last successful sync cursor, and uninstall timestamp
 - Encrypted installation secrets and provider credentials
 - Non-secret connector configuration
 - Accepted webhook deliveries and idempotency state
 - Jobs, attempts, scheduling, and terminal state
 - Connector activity and sanitized error summaries
 
-Schema evolution uses checked-in migrations. D1 and PostgreSQL migrations may differ syntactically but must preserve contract behavior. Uninstall cleanup has an explicit retention policy and removes credentials promptly.
+Throttle is authoritative for installation state; the extension is authoritative for provider synchronization state. Schema evolution uses checked-in migrations. D1 and PostgreSQL migrations may differ syntactically but must preserve contract behavior. Uninstall cleanup has an explicit retention policy, removes credentials promptly, and prevents queued or scheduled work for that installation from continuing.
 
 ## Portability Strategy
 
@@ -169,7 +172,7 @@ The Node implementation is described as a Node/PostgreSQL adapter because it sho
 
 Errors are classified into validation, authentication, authorization, configuration, retryable provider, terminal provider, infrastructure, and programmer errors. Public responses are safe and stable; detailed internal errors remain structured and redacted.
 
-Every webhook and job receives correlation fields including installation, environment, event or delivery ID, job ID, and attempt. Logs are structured. Activity records provide enough sanitized context for the UI and operators to understand what happened and what action is available.
+Every webhook and job receives correlation fields including request ID, installation ID, environment, event ID and type, extension version, provider account reference, job ID, attempt, duration, and result class. Logs are structured. Activity records provide enough sanitized context for the UI and operators to understand what happened and what action is available.
 
 Liveness only indicates that the process can respond. Readiness checks required dependencies without exposing connection details or secrets.
 
@@ -181,6 +184,7 @@ Liveness only indicates that the process can respond. Readiness checks required 
 - Phase-two integration tests exercise Node routes, PostgreSQL, and its job runner.
 - UI component tests cover bridge loading, configuration, activity, and error states.
 - One end-to-end demo test covers signed webhook receipt, idempotency, enqueueing, fake provider execution, persisted activity, and UI-visible status.
+- Required failure and lifecycle scenarios include invalid signatures, duplicate and out-of-order events, timeouts, provider `429` and `5xx` responses, provider outages, expired credentials, missing optional fields, pagination, uninstall during queued work, version upgrades, newly requested scope consent, Test/production isolation, and cancellation or return races relevant to fulfillment connectors.
 - Test fixtures provide mocked bridge context, signed webhook payloads, and deterministic provider responses.
 - CI enforces type checking, linting, formatting, package dependency boundaries, unit tests, contract tests, integration tests, and production builds.
 
@@ -196,7 +200,36 @@ The repository is distributed as a GitHub template. A setup command will:
 - Optionally remove the fictional demo while retaining a minimal provider adapter skeleton.
 - Print the next local-development, test, registration, and deployment steps.
 
+The supported toolchain includes Node.js 20 or newer. Local development documents a publicly reachable HTTPS tunnel for real iframe and webhook testing. A committed `.env.example` contains names and safe examples only; one-time installation credentials and provider secrets must never be copied into source-controlled environment files.
+
+One repository per provider integration is the recommended ownership model because integrations have independent credentials, data models, release cycles, deployments, and incident boundaries. A shared monorepo is appropriate only when one team intentionally shares runtime and operational ownership. Projects created from this starter own their copied code and must deliberately pull future security fixes; the starter is not a runtime dependency.
+
 Initial documentation covers architecture, local development, the demo lifecycle, adding a provider, Throttle catalog registration and installation, handling one-time secrets, Cloudflare deployment, migrations, testing, security operations, and troubleshooting. Milestone two adds Node/PostgreSQL configuration and Render deployment.
+
+## Root README Contract
+
+The root `README.md` is the primary onboarding path for human developers and coding agents. It must be useful from a clean clone and must not rely on private Throttle source code or undocumented organizational knowledge.
+
+It includes:
+
+- What Throttle extensions are and when to choose embedded, backend, or hybrid shapes.
+- What this starter provides, what the publisher owns, and what the fictional demo does.
+- Supported runtime and package-manager versions, prerequisites, repository layout, and dependency boundaries.
+- A clean-clone quickstart with verified install, setup, local development, test, build, migration, tunnel, and deployment commands, along with expected local URLs and outcomes.
+- Test-mode-first Throttle registration, version publication, installation, iframe verification, test-event delivery, and uninstall steps.
+- Configuration and secret inventory explaining which values are public, local-only, platform secrets, per installation, or safe for browser code.
+- Instructions for replacing the demo provider, adding events and scopes, evolving schemas, and implementing a new runtime adapter.
+- Best practices for least privilege, raw-body signature verification, identity verification, credential encryption, tenant isolation, idempotency, retries, rate limits, pagination, structured redacted logging, uninstall cleanup, data retention, version compatibility, and production readiness.
+- Testing guidance and the required failure/lifecycle matrix.
+- Deployment paths for Cloudflare and, after milestone two, Node/PostgreSQL with Render.
+- Troubleshooting for bridge handshake failures, invalid signatures, migrations, queues, credentials, and environment mismatches.
+- Contribution, support, security-reporting, license, and starter-upgrade guidance.
+- Canonical links to the Throttle product site, dashboard, extension overview, Get Started, starter-repository guide, Build, Identity JWT, Events, Scopes, Installing, Testing, Versioning, Security, Publishing, Operations, API reference, public packages, and platform status when stable public URLs exist.
+- A concise coding-agent guide identifying source-of-truth documents, architectural invariants, commands to run before completion, files that contain generated artifacts, and security rules that must not be weakened.
+
+README commands and external links must be checked from a clean clone before the repository is declared public. The Throttle documentation must not link to the starter until the repository has a stable public URL. Links must use canonical public resources and must not point at private repositories or temporary deployments.
+
+Detailed guides may live under `docs/`, but the README must link them from the relevant onboarding step rather than forcing readers or agents to discover them unaided.
 
 ## Delivery Milestones
 
@@ -213,6 +246,7 @@ Deliver the Node/PostgreSQL adapters, database-backed job runner, Render bluepri
 ## Acceptance Criteria
 
 - A developer can create a repository from the template and run setup, development, tests, and the fictional connector locally using documented commands.
+- A developer or coding agent with no private Throttle repository access can follow the root README from a clean clone to a running, tested local extension and understand the safe customization boundaries.
 - The demo iframe works with a mocked bridge locally and with the real Throttle bridge when installed.
 - A valid signed demo webhook is acknowledged once, processed asynchronously, and reflected in persisted activity visible to the UI.
 - Invalid signatures, invalid identity tokens, cross-install access, duplicate deliveries, missing credentials, and exhausted retries have automated coverage.
@@ -221,3 +255,6 @@ Deliver the Node/PostgreSQL adapters, database-backed job runner, Render bluepri
 - The Cloudflare reference deployment passes its integration and end-to-end tests in milestone one.
 - Both Cloudflare and Node/PostgreSQL implementations pass shared adapter contracts before the first stable public release.
 - Removing the demo leaves a compiling, tested provider skeleton and documented extension points.
+- All public Throttle-facing request and response fields use strict camelCase.
+- Marketplace preflight documentation covers HTTPS, least-privilege scopes, clean install and uninstall, replay safety, health checks, safe screenshots, support/privacy/terms URLs, production smoke testing, and a named operational owner.
+- Operations documentation covers queue and webhook lag, provider availability and credential health, poison events and dead letters, incident response, suspension or delisting, backward-compatible changes, deprecation, data export and deletion, and credential rotation.
