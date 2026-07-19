@@ -10,8 +10,10 @@ export type {
   ConnectorQueuePayload,
 } from './producer.js';
 export { consumeConnectorQueue } from './consumer.js';
+export { createActivityStoreQueueFailureRecorder } from './failure-recorder.js';
 export type {
   CloudflareQueueMessage,
   CloudflareQueueMessageBatch,
   ConnectorQueueConsumerDependencies,
+  QueueFailureRecord,
 } from './consumer.js';

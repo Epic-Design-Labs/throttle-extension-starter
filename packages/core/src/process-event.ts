@@ -86,6 +86,7 @@ async function finish(
       : result.status === 'retry'
         ? 'retryable_failure'
         : 'terminal_failure';
+  const now = dependencies.clock.now();
   const execution = await dependencies.executions.finish({
     jobId: job.jobId,
     attempt,
@@ -96,14 +97,19 @@ async function finish(
         : result.status === 'retry'
           ? 'retry'
           : 'failed',
+    ...(result.status === 'retry'
+      ? {
+          nextEligibleAt: new Date(now.valueOf() + result.delaySeconds * 1000),
+        }
+      : {}),
     activity: makeActivity(
       job,
       attempt,
-      dependencies.clock.now(),
+      now,
       activityResult,
       result.status === 'success' ? undefined : result.code,
     ),
-    now: dependencies.clock.now(),
+    now,
   });
   if (execution === 'cancelled')
     return { status: 'terminal', code: 'JOB_CANCELLED' };

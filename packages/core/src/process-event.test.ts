@@ -320,6 +320,15 @@ describe('processConnectorEvent', () => {
         delaySeconds,
         code: 'RETRYABLE_PROVIDER_ERROR',
       });
+      expect(f.deps.executions.finish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'retry',
+          nextEligibleAt: new Date(
+            new Date('2026-07-19T01:00:00.000Z').valueOf() +
+              delaySeconds * 1000,
+          ),
+        }),
+      );
     },
   );
   test('maps terminal provider errors without exposing their causes', async () => {

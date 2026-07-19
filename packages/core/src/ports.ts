@@ -79,6 +79,8 @@ export interface JobExecutionStore {
     attempt: number;
     token: string;
     status: 'completed' | 'retry' | 'failed';
+    /** Required for retry; the durable store must not claim before this time. */
+    nextEligibleAt?: Date;
     /** Sanitized outcome persisted atomically with the fenced state change. */
     activity: Activity;
     now: Date;

@@ -5,6 +5,7 @@ import {
   MAX_QUEUE_PAYLOAD_BYTES,
   consumeConnectorQueue,
   createCloudflareQueueProducer,
+  createActivityStoreQueueFailureRecorder,
 } from './index.js';
 
 const job: ConnectorJob = {
@@ -23,6 +24,7 @@ const job: ConnectorJob = {
 
 function message(body: unknown, attempts = 1) {
   return {
+    id: `message-${attempts}`,
     body,
     attempts,
     ack: vi.fn(),
@@ -104,7 +106,7 @@ describe('Cloudflare queue consumer', () => {
     const item = message(body);
     await consumeConnectorQueue(
       { messages: [item] },
-      { processConnectorEvent: vi.fn(async () => result), logger: logger() },
+      consumerDependencies(vi.fn(async () => result)),
     );
     expect(item.ack).toHaveBeenCalledOnce();
     expect(item.retry).not.toHaveBeenCalled();
@@ -126,6 +128,8 @@ describe('Cloudflare queue consumer', () => {
             delaySeconds,
           })),
           logger: logger(),
+          recordFailure: vi.fn(),
+          maxDeliveryAttempts: 5,
         },
       );
       expect(item.retry).toHaveBeenCalledOnce();
@@ -147,6 +151,8 @@ describe('Cloudflare queue consumer', () => {
             delaySeconds,
           })),
           logger: logger(),
+          recordFailure: vi.fn(),
+          maxDeliveryAttempts: 5,
         },
       );
       expect(item.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
@@ -159,7 +165,7 @@ describe('Cloudflare queue consumer', () => {
     const process = vi.fn();
     await consumeConnectorQueue(
       { messages: [item] },
-      { processConnectorEvent: process, logger: log },
+      consumerDependencies(process, { logger: log }),
     );
     expect(item.ack).toHaveBeenCalledOnce();
     expect(item.retry).not.toHaveBeenCalled();
@@ -181,7 +187,7 @@ describe('Cloudflare queue consumer', () => {
     const log = logger();
     await consumeConnectorQueue(
       { messages: [first, malformed, third] },
-      { processConnectorEvent: process, logger: log },
+      consumerDependencies(process, { logger: log }),
     );
     expect(first.retry).toHaveBeenCalledOnce();
     expect(first.ack).not.toHaveBeenCalled();
@@ -206,11 +212,103 @@ describe('Cloudflare queue consumer', () => {
             status: 'success' as const,
           })),
           logger: logger(),
+          recordFailure: vi.fn(),
+          maxDeliveryAttempts: 5,
         },
       ),
     ).rejects.toThrow('ack transport failed');
     expect(item.ack).toHaveBeenCalledOnce();
     expect(item.retry).not.toHaveBeenCalled();
+  });
+
+  test('retries a structurally plausible future envelope without dropping it', async () => {
+    const item = message({ version: 2, job });
+    const process = vi.fn();
+    await consumeConnectorQueue(
+      { messages: [item] },
+      consumerDependencies(process),
+    );
+    expect(item.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
+    expect(item.ack).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+  });
+
+  test('records a safe processor failure before retry and marks the final delivery terminal', async () => {
+    const item = message(body, 3);
+    const recorder = vi.fn(async () => undefined);
+    const process = vi.fn(async () => {
+      throw new Error('credential=raw-secret');
+    });
+    await consumeConnectorQueue(
+      { messages: [item] },
+      consumerDependencies(process, {
+        recordFailure: recorder,
+        maxDeliveryAttempts: 3,
+      }),
+    );
+    expect(recorder).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      installationId: 'installation-1',
+      eventId: 'event-1',
+      messageId: 'message-3',
+      deliveryAttempt: 3,
+      terminal: true,
+      code: 'QUEUE_PROCESSOR_ERROR',
+    });
+    expect(recorder.mock.invocationCallOrder[0]).toBeLessThan(
+      item.retry.mock.invocationCallOrder[0]!,
+    );
+    expect(item.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
+  });
+
+  test('recorder failure is safely logged and still retried', async () => {
+    const item = message(body);
+    const log = logger();
+    await consumeConnectorQueue(
+      { messages: [item] },
+      consumerDependencies(
+        vi.fn(async () => Promise.reject(new Error('raw'))),
+        {
+          logger: log,
+          recordFailure: vi.fn(async () => Promise.reject(new Error('secret'))),
+        },
+      ),
+    );
+    expect(item.retry).toHaveBeenCalledOnce();
+    expect(item.ack).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify(Object.values(log).flatMap((fn) => fn.mock.calls)),
+    ).not.toMatch(/raw|secret/iu);
+  });
+});
+
+describe('queue failure recorder', () => {
+  test('creates deterministic idempotent safe activity without unfenced job mutation', async () => {
+    const activities = new Map<string, unknown>();
+    const append = vi.fn(async (activity: { activityId: string }) => {
+      activities.set(activity.activityId, activity);
+    });
+    const record = createActivityStoreQueueFailureRecorder({
+      activities: { append, list: vi.fn(async () => []) },
+      clock: { now: () => new Date('2026-07-19T02:00:00.000Z') },
+    });
+    const failure = {
+      jobId: 'job-1',
+      installationId: 'installation-1',
+      eventId: 'event-1',
+      messageId: 'message-3',
+      deliveryAttempt: 3,
+      terminal: true,
+      code: 'QUEUE_PROCESSOR_ERROR' as const,
+    };
+    await record(failure);
+    await record(failure);
+    expect(activities).toHaveLength(1);
+    expect([...activities.values()][0]).toMatchObject({
+      result: 'terminal_failure',
+      attempt: 3,
+      code: 'QUEUE_DELIVERY_EXHAUSTED',
+    });
   });
 });
 
@@ -221,6 +319,19 @@ function logger() {
     warn: vi.fn(),
     error: vi.fn(),
   };
+}
+
+function consumerDependencies(
+  processConnectorEvent: (...args: never[]) => Promise<unknown>,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    processConnectorEvent,
+    logger: logger(),
+    recordFailure: vi.fn(async () => undefined),
+    maxDeliveryAttempts: 5,
+    ...overrides,
+  } as never;
 }
 
 function serializedBytes(value: ConnectorJob): number {

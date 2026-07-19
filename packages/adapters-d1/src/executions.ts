@@ -20,9 +20,9 @@ export class D1JobExecutionStore implements JobExecutionStore {
     const lease = new Date(input.now.valueOf() + LEASE_MS).toISOString();
     const row = await this.db
       .prepare(
-        "UPDATE jobs SET status='processing', attempt=CASE WHEN status IN ('pending','retry') THEN attempt+1 ELSE attempt END, updated_at=?, lease_expires_at=?, lease_token=lower(hex(randomblob(16))) WHERE job_id=? AND (status IN ('pending','retry') OR (status='processing' AND lease_expires_at <= ?)) RETURNING lease_token, attempt",
+        "UPDATE jobs SET status='processing', attempt=CASE WHEN status IN ('pending','retry') THEN attempt+1 ELSE attempt END, updated_at=?, lease_expires_at=?, lease_token=lower(hex(randomblob(16))) WHERE job_id=? AND (status='pending' OR (status='retry' AND scheduled_at <= ?) OR (status='processing' AND lease_expires_at <= ?)) RETURNING lease_token, attempt",
       )
-      .bind(now, lease, requireText(input.jobId, 'jobId'), now)
+      .bind(now, lease, requireText(input.jobId, 'jobId'), now, now)
       .first<{ lease_token: string; attempt: number }>();
     if (row !== null)
       return {
@@ -32,14 +32,22 @@ export class D1JobExecutionStore implements JobExecutionStore {
       };
     const existing = await this.db
       .prepare(
-        'SELECT status, attempt, lease_expires_at FROM jobs WHERE job_id=?',
+        'SELECT status, attempt, scheduled_at, lease_expires_at FROM jobs WHERE job_id=?',
       )
       .bind(input.jobId)
       .first<{
         status: string;
         attempt: number;
+        scheduled_at: string;
         lease_expires_at: string | null;
       }>();
+    if (existing?.status === 'retry') {
+      const remaining = Math.ceil(
+        (Date.parse(existing.scheduled_at) - input.now.valueOf()) / 1000,
+      );
+      if (remaining > 0)
+        return { status: 'busy', retryAfterSeconds: Math.min(remaining, 300) };
+    }
     if (
       existing?.status === 'processing' &&
       existing.lease_expires_at !== null
@@ -62,9 +70,17 @@ export class D1JobExecutionStore implements JobExecutionStore {
     attempt: number;
     token: string;
     status: 'completed' | 'retry' | 'failed';
+    nextEligibleAt?: Date;
     activity: Activity;
     now: Date;
   }): Promise<JobFinishResult> {
+    if (
+      input.status === 'retry' &&
+      (!(input.nextEligibleAt instanceof Date) ||
+        Number.isNaN(input.nextEligibleAt.valueOf()) ||
+        input.nextEligibleAt <= input.now)
+    )
+      throw new Error('Retry finish requires a future nextEligibleAt');
     const activity = activitySchema.parse(input.activity);
     if (activity.jobId !== input.jobId || activity.attempt !== input.attempt)
       throw new Error('Activity does not match claimed execution');
@@ -90,10 +106,12 @@ export class D1JobExecutionStore implements JobExecutionStore {
         ),
       this.db
         .prepare(
-          "UPDATE jobs SET status=?, updated_at=?, lease_expires_at=NULL, lease_token=NULL WHERE job_id=? AND status='processing' AND attempt=? AND lease_token=?",
+          "UPDATE jobs SET status=?, scheduled_at=CASE WHEN ?='retry' THEN ? ELSE scheduled_at END, updated_at=?, lease_expires_at=NULL, lease_token=NULL WHERE job_id=? AND status='processing' AND attempt=? AND lease_token=?",
         )
         .bind(
           input.status,
+          input.status,
+          input.nextEligibleAt?.toISOString() ?? input.now.toISOString(),
           input.now.toISOString(),
           requireText(input.jobId, 'jobId'),
           input.attempt,

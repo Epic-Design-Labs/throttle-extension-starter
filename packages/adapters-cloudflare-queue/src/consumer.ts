@@ -6,8 +6,9 @@ const UNEXPECTED_RETRY_DELAY_SECONDS = 5;
 const MAX_CLOUDFLARE_DELAY_SECONDS = 43_200;
 
 export interface CloudflareQueueMessage {
+  id: string;
   body: unknown;
-  attempts?: number;
+  attempts: number;
   ack(): void;
   retry(options: { delaySeconds: number }): void;
 }
@@ -21,6 +22,43 @@ export interface ConnectorQueueConsumerDependencies {
     job: ConnectorJob,
   ): Promise<ProcessConnectorEventResult>;
   logger: Logger;
+  recordFailure(failure: QueueFailureRecord): Promise<void>;
+  maxDeliveryAttempts: number;
+}
+
+export interface QueueFailureRecord {
+  jobId: string;
+  installationId: string;
+  eventId: string;
+  messageId: string;
+  deliveryAttempt: number;
+  terminal: boolean;
+  code: 'QUEUE_PROCESSOR_ERROR';
+}
+
+function unsupportedVersion(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null || Array.isArray(body))
+    return false;
+  const envelope = body as Record<string, unknown>;
+  if (
+    !Number.isInteger(envelope.version) ||
+    (envelope.version as number) < 1 ||
+    envelope.version === 1 ||
+    typeof envelope.job !== 'object' ||
+    envelope.job === null ||
+    Array.isArray(envelope.job)
+  )
+    return false;
+  const job = envelope.job as Record<string, unknown>;
+  const event = job.event as Record<string, unknown> | undefined;
+  return (
+    typeof job.jobId === 'string' &&
+    job.jobId.length > 0 &&
+    typeof job.installationId === 'string' &&
+    job.installationId.length > 0 &&
+    typeof event?.id === 'string' &&
+    event.id.length > 0
+  );
 }
 
 function retryDelay(value: number): number {
@@ -37,6 +75,13 @@ async function consumeMessage(
 ): Promise<void> {
   const parsed = connectorQueuePayloadSchema.safeParse(message.body);
   if (!parsed.success) {
+    if (unsupportedVersion(message.body)) {
+      dependencies.logger.warn('Unsupported connector queue version', {
+        code: 'UNSUPPORTED_QUEUE_VERSION',
+      });
+      message.retry({ delaySeconds: UNEXPECTED_RETRY_DELAY_SECONDS });
+      return;
+    }
     dependencies.logger.warn('Invalid connector queue message', {
       code: 'INVALID_QUEUE_PAYLOAD',
     });
@@ -54,6 +99,33 @@ async function consumeMessage(
       eventId: job.event.id,
       code: 'QUEUE_PROCESSOR_ERROR',
     });
+    const deliveryAttempt =
+      Number.isInteger(message.attempts) && message.attempts > 0
+        ? message.attempts
+        : 1;
+    const maxDeliveryAttempts =
+      Number.isInteger(dependencies.maxDeliveryAttempts) &&
+      dependencies.maxDeliveryAttempts > 0
+        ? dependencies.maxDeliveryAttempts
+        : 1;
+    try {
+      await dependencies.recordFailure({
+        jobId: job.jobId,
+        installationId: job.installationId,
+        eventId: job.event.id,
+        messageId: message.id,
+        deliveryAttempt,
+        terminal: deliveryAttempt >= maxDeliveryAttempts,
+        code: 'QUEUE_PROCESSOR_ERROR',
+      });
+    } catch {
+      dependencies.logger.error('Connector queue failure recording failed', {
+        jobId: job.jobId,
+        installationId: job.installationId,
+        eventId: job.event.id,
+        code: 'QUEUE_FAILURE_RECORDING_FAILED',
+      });
+    }
     message.retry({ delaySeconds: UNEXPECTED_RETRY_DELAY_SECONDS });
     return;
   }

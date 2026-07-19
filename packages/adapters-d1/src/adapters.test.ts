@@ -231,6 +231,7 @@ describe('D1 schema', () => {
         attempt: 1,
         token: first.token,
         status: 'retry',
+        nextEligibleAt: new Date('2026-07-19T10:01:00.000Z'),
         activity: executionActivity('fence-job', 'fence-installation', 1),
         now: new Date(at),
       }),
@@ -241,6 +242,7 @@ describe('D1 schema', () => {
         attempt: 1,
         token: 'wrong-token',
         status: 'retry',
+        nextEligibleAt: new Date('2026-07-19T10:01:00.000Z'),
         activity: executionActivity('fence-job', 'fence-installation', 1),
         now: new Date(at),
       }),
@@ -251,6 +253,7 @@ describe('D1 schema', () => {
         attempt: 1,
         token: second.token,
         status: 'retry',
+        nextEligibleAt: new Date('2026-07-19T10:01:00.000Z'),
         activity: executionActivity(
           'fence-job',
           'fence-installation',
@@ -448,6 +451,7 @@ describe('D1 schema', () => {
       attempt: 1,
       token: progressClaim.token,
       status: 'retry',
+      nextEligibleAt: new Date('2026-07-19T10:02:05.000Z'),
       activity: executionActivity(
         'progress-job',
         'progress-installation',
@@ -460,6 +464,24 @@ describe('D1 schema', () => {
       await adapters.executions.claim({
         jobId: 'progress-job',
         now: new Date(at),
+      }),
+    ).toMatchObject({ status: 'busy', retryAfterSeconds: 125 });
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        now: new Date('2026-07-19T10:00:00.000Z'),
+      }),
+    ).toMatchObject({ status: 'busy', retryAfterSeconds: 125 });
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        now: new Date('2026-07-19T10:02:04.000Z'),
+      }),
+    ).toMatchObject({ status: 'busy', retryAfterSeconds: 1 });
+    expect(
+      await adapters.executions.claim({
+        jobId: 'progress-job',
+        now: new Date('2026-07-19T10:02:05.000Z'),
       }),
     ).toMatchObject({ status: 'claimed', attempt: 2 });
   });
@@ -582,6 +604,7 @@ describe('D1 schema', () => {
         attempt: 1,
         token: uninstallClaim.token,
         status: 'retry',
+        nextEligibleAt: new Date('2026-07-19T10:03:00.000Z'),
         activity: executionActivity(
           'race-uninstall-job',
           'race-uninstall-installation',
