@@ -92,11 +92,15 @@ describe('portable package boundaries', () => {
   );
 
   it('isolates runtime globals and typechecks root tests with Node 20 types', async () => {
-    const [base, rootPackage, testsConfig] = await Promise.all([
-      readFile('tsconfig.base.json', 'utf8'),
-      readFile('package.json', 'utf8'),
-      readFile('tsconfig.tests.json', 'utf8'),
-    ]);
+    const [base, rootPackage, testsConfig, appConfig, workspacePaths, vitest] =
+      await Promise.all([
+        readFile('tsconfig.base.json', 'utf8'),
+        readFile('package.json', 'utf8'),
+        readFile('tsconfig.tests.json', 'utf8'),
+        readFile('apps/cloudflare/tsconfig.json', 'utf8'),
+        readFile('tsconfig.workspace-paths.json', 'utf8'),
+        readFile('vitest.root.config.ts', 'utf8'),
+      ]);
     expect(JSON.parse(base)).toMatchObject({ compilerOptions: { types: [] } });
     expect(JSON.parse(rootPackage)).toMatchObject({
       scripts: {
@@ -106,7 +110,33 @@ describe('portable package boundaries', () => {
       devDependencies: { '@types/node': expect.stringMatching(/^20\./u) },
     });
     expect(JSON.parse(testsConfig)).toMatchObject({
+      extends: ['./tsconfig.base.json', './tsconfig.workspace-paths.json'],
       compilerOptions: { types: ['node', 'vitest/globals'] },
     });
+    expect(JSON.parse(appConfig)).toMatchObject({
+      extends: [
+        '../../tsconfig.base.json',
+        '../../tsconfig.workspace-paths.json',
+      ],
+    });
+    const paths = JSON.parse(workspacePaths).compilerOptions.paths as Record<
+      string,
+      string[]
+    >;
+    expect(paths).toEqual({
+      '@starter/adapters-cloudflare-queue': [
+        './packages/adapters-cloudflare-queue/src/index.ts',
+      ],
+      '@starter/adapters-d1': ['./packages/adapters-d1/src/index.ts'],
+      '@starter/contracts': ['./packages/contracts/src/index.ts'],
+      '@starter/core': ['./packages/core/src/index.ts'],
+      '@starter/demo-connector': ['./examples/demo-connector/src/index.ts'],
+      '@starter/security': ['./packages/security/src/index.ts'],
+      '@starter/throttle': ['./packages/throttle/src/index.ts'],
+    });
+    for (const [alias, [source]] of Object.entries(paths)) {
+      expect(vitest).toContain(`'${alias}'`);
+      expect(vitest).toContain(source!.replace(/^\.\//u, ''));
+    }
   });
 });

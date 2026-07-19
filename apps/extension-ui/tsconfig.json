@@ -1,5 +1,8 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": [
+    "../../tsconfig.base.json",
+    "../../tsconfig.workspace-paths.json"
+  ],
   "compilerOptions": {
     "allowImportingTsExtensions": false,
     "declaration": false,

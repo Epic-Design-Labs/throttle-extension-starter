@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@starter/adapters-cloudflare-queue": [
+        "./packages/adapters-cloudflare-queue/src/index.ts"
+      ],
+      "@starter/adapters-d1": ["./packages/adapters-d1/src/index.ts"],
+      "@starter/contracts": ["./packages/contracts/src/index.ts"],
+      "@starter/core": ["./packages/core/src/index.ts"],
+      "@starter/demo-connector": ["./examples/demo-connector/src/index.ts"],
+      "@starter/security": ["./packages/security/src/index.ts"],
+      "@starter/throttle": ["./packages/throttle/src/index.ts"]
+    }
+  }
+}

@@ -5,7 +5,10 @@ import {
   type Activity,
   type ThrottleEvent,
 } from '../../packages/contracts/src/index.js';
-import type { D1Database } from '../../packages/adapters-d1/src/index.js';
+import type {
+  D1Database,
+  D1PreparedStatement,
+} from '../../packages/adapters-d1/src/index.js';
 import type {
   CloudflareQueue,
   CloudflareQueueMessage,
@@ -53,10 +56,9 @@ class InProcessQueue implements CloudflareQueue {
   constructor(private readonly clock: TestClock) {}
 
   async send(body: ConnectorQueuePayload): Promise<void> {
-    const key = body.job.jobId;
-    if (this.items.has(key)) return;
-    this.items.set(key, {
-      id: `message-${String(++this.sequence)}`,
+    const id = `message-${String(++this.sequence)}`;
+    this.items.set(id, {
+      id,
       body: structuredClone(body),
       attempts: 1,
       readyAt: this.clock.now().valueOf(),
@@ -219,6 +221,36 @@ function mapActivity(row: Record<string, unknown>): Activity {
   });
 }
 
+function failFirstQueuePublishMark(database: D1Database): D1Database {
+  let fail = true;
+  return {
+    prepare(query) {
+      const statement = database.prepare(query);
+      if (!/^UPDATE jobs SET queue_published_at=/u.test(query))
+        return statement;
+      let bound = statement;
+      const intercepted: D1PreparedStatement = {
+        bind(...values) {
+          bound = bound.bind(...values);
+          return intercepted;
+        },
+        first: <T>() => bound.first<T>(),
+        all: <T>() => bound.all<T>(),
+        async run<T>() {
+          if (fail) {
+            fail = false;
+            throw new Error('Injected queue publish mark failure');
+          }
+          return bound.run<T>();
+        },
+      };
+      return intercepted;
+    },
+    batch: (statements) => database.batch(statements),
+    exec: (query) => database.exec(query),
+  };
+}
+
 export interface TestSystem {
   bootstrap(): Promise<Response>;
   connect(): Promise<Response>;
@@ -247,7 +279,9 @@ export interface TestSystem {
   dispose(): Promise<void>;
 }
 
-export async function createTestSystem(): Promise<TestSystem> {
+export async function createTestSystem(
+  options: { failFirstQueuePublishMark?: boolean } = {},
+): Promise<TestSystem> {
   const runtime = new Miniflare({
     modules: true,
     script: 'export default { fetch() { return new Response("ok") } }',
@@ -255,6 +289,9 @@ export async function createTestSystem(): Promise<TestSystem> {
   });
   const database = (await runtime.getD1Database('DB')) as D1Database;
   await applyMigrations(database);
+  const workerDatabase = options.failFirstQueuePublishMark
+    ? failFirstQueuePublishMark(database)
+    : database;
   const clock = new TestClock();
   const identity = await createIdentity(clock);
   const queueBinding = new InProcessQueue(clock);
@@ -276,7 +313,7 @@ export async function createTestSystem(): Promise<TestSystem> {
   };
   const key = new Uint8Array(32).fill(23);
   const env: Env = {
-    DB: database,
+    DB: workerDatabase,
     CONNECTOR_QUEUE: queueBinding,
     ENCRYPTION_KEY: base64url(key),
     ENCRYPTION_KEY_VERSION: '1',

@@ -55,6 +55,28 @@ describe('demo extension lifecycle', () => {
     expect(system.providerOrders()).toEqual([event.data.orderId]);
   });
 
+  test('republishes a crash-gap delivery without duplicating provider effects', async () => {
+    system = await createTestSystem({ failFirstQueuePublishMark: true });
+    await prepare(system);
+    const event = { ...(await orderCreated()), id: 'evt_crash_gap' };
+
+    expect((await system.deliver(event)).status).toBe(503);
+    expect(system.queuedCount()).toBe(1);
+    expect((await system.deliver(event)).status).toBe(202);
+    expect(system.queuedCount()).toBe(2);
+
+    await system.drainReadyQueue();
+
+    expect(system.queuedCount()).toBe(0);
+    expect(await system.jobState(event.id)).toMatchObject({
+      status: 'completed',
+      attempt: 1,
+    });
+    expect(system.providerAttemptCount()).toBe(1);
+    expect(system.providerOrders()).toEqual([event.data.orderId]);
+    expect(await system.connectorActivityCount(event.id)).toBe(1);
+  });
+
   test('rejects an invalid webhook signature without accepting work', async () => {
     system = await createTestSystem();
     await prepare(system);
