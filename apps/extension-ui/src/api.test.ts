@@ -102,6 +102,55 @@ describe('publisher backend API client', () => {
     expect(getToken).toHaveBeenCalledTimes(2);
   });
 
+  test.each([
+    Object.assign(new Error('refresh timeout secret'), {
+      code: 'BRIDGE_REFRESH_TIMEOUT',
+    }),
+    new Error('transient host failure secret'),
+  ])(
+    'maps a refresh rejection to a safe retryable API error',
+    async (failure) => {
+      const client = createBackendClient({
+        baseUrl: 'https://connector.example',
+        mode: 'throttle',
+        getToken: () => 'expired-token',
+        refreshToken: vi.fn(async () => {
+          throw failure;
+        }),
+        fetcher: vi.fn(async () =>
+          Response.json(
+            { error: { code: 'AUTHENTICATION_FAILED' } },
+            { status: 401 },
+          ),
+        ),
+      });
+
+      await expect(client.getInstallation()).rejects.toMatchObject({
+        status: 503,
+        code: 'BRIDGE_REFRESH_FAILED',
+        message: 'The Throttle session could not be refreshed.',
+        retryable: true,
+      });
+    },
+  );
+
+  test.each([
+    new DOMException('aborted', 'AbortError'),
+    Object.assign(new Error('destroyed'), { code: 'BRIDGE_DESTROYED' }),
+  ])('preserves a non-actionable refresh cancellation', async (failure) => {
+    const client = createBackendClient({
+      baseUrl: 'https://connector.example',
+      mode: 'throttle',
+      getToken: () => 'expired-token',
+      refreshToken: vi.fn(async () => {
+        throw failure;
+      }),
+      fetcher: vi.fn(async () => Response.json(null, { status: 401 })),
+    });
+
+    await expect(client.getInstallation()).rejects.toBe(failure);
+  });
+
   test('fails before fetch when the bridge has no session token', async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createBackendClient({

@@ -118,6 +118,11 @@ function invalidResponse(): never {
   });
 }
 
+function isNonActionableRefreshFailure(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  return error.name === 'AbortError' || error.code === 'BRIDGE_DESTROYED';
+}
+
 const installationStatuses = new Set<InstallationResponse['status']>([
   'not_configured',
   'pending',
@@ -256,7 +261,16 @@ export function createBackendClient(options: ClientOptions): BackendClient {
             code: 'BRIDGE_REFRESH_UNAVAILABLE',
             message: 'The Throttle session could not be refreshed.',
           });
-        await options.refreshToken();
+        try {
+          await options.refreshToken();
+        } catch (error) {
+          if (isNonActionableRefreshFailure(error)) throw error;
+          throw new ApiError({
+            status: 503,
+            code: 'BRIDGE_REFRESH_FAILED',
+            message: 'The Throttle session could not be refreshed.',
+          });
+        }
         continue;
       }
       if (!response.ok) throw await errorFromResponse(response);

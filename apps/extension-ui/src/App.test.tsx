@@ -433,15 +433,15 @@ describe('embedded connector management UI', () => {
     );
   });
 
-  test('shows a retryable request error and can retry the load', async () => {
+  test('shows a retryable bridge refresh error and can retry the load', async () => {
     const user = userEvent.setup();
     const getInstallation = vi
       .fn()
       .mockRejectedValueOnce(
         new ApiError({
           status: 503,
-          code: 'INFRASTRUCTURE_UNAVAILABLE',
-          message: 'Service temporarily unavailable.',
+          code: 'BRIDGE_REFRESH_FAILED',
+          message: 'The Throttle session could not be refreshed.',
           requestId: 'request-1',
         }),
       )
@@ -449,7 +449,7 @@ describe('embedded connector management UI', () => {
     fixture({ client: { getInstallation } });
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'temporarily unavailable',
+      'could not be refreshed',
     );
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     await screen.findByRole('heading', { name: 'Secure installation setup' });
@@ -464,10 +464,12 @@ describe('embedded connector management UI', () => {
     const { bridge, unmount } = fixture({ client: { getInstallation } });
     await waitFor(() => expect(getInstallation).toHaveBeenCalledOnce());
     const signal = getInstallation.mock.calls[0]![0]?.signal;
+    signal?.addEventListener('abort', () =>
+      pending.reject(new DOMException('aborted', 'AbortError')),
+    );
 
     unmount();
     expect(signal?.aborted).toBe(true);
-    pending.resolve(installation('not_configured'));
     await Promise.resolve();
     expect(bridge.toast).not.toHaveBeenCalled();
   });
