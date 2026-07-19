@@ -7,12 +7,21 @@ settings:
 importers:
   .:
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 4.20251210.0
+        version: 4.20251210.0
       '@eslint/js':
         specifier: latest
         version: 10.0.1(eslint@10.7.0)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       eslint:
         specifier: latest
         version: 10.7.0
+      miniflare:
+        specifier: 4.20250617.0
+        version: 4.20250617.0
       prettier:
         specifier: latest
         version: 3.9.5

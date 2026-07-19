@@ -20,8 +20,11 @@
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20251210.0",
     "@eslint/js": "latest",
+    "@types/node": "24.13.3",
     "eslint": "latest",
+    "miniflare": "4.20250617.0",
     "prettier": "latest",
     "typescript": "^6.0.3",
     "typescript-eslint": "latest",

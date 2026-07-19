@@ -1,0 +1,10 @@
+{
+  "id": "evt_order_1",
+  "type": "order.created",
+  "workspaceId": "workspace-demo",
+  "environmentId": "environment-demo",
+  "createdAt": "2026-07-19T11:00:00.000Z",
+  "data": {
+    "orderId": "order-1001"
+  }
+}
