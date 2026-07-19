@@ -23,10 +23,14 @@ const hasSafeDepth = (root: unknown): boolean => {
   return true;
 };
 
-/** This parse is only a bounded lookup hint. Its values are attacker-controlled. */
-export function parseWebhookRoutingHint(
+export interface BoundedWebhookJson {
+  readonly value: unknown;
+}
+
+/** @internal Shared bounded JSON gate used before any webhook trust decision. */
+export function parseBoundedWebhookJson(
   rawBody: unknown,
-): UntrustedWebhookRoutingHint | null {
+): BoundedWebhookJson | null {
   if (
     typeof rawBody !== 'string' ||
     rawBody.length === 0 ||
@@ -34,7 +38,21 @@ export function parseWebhookRoutingHint(
   )
     return null;
   try {
-    const parsed: unknown = JSON.parse(rawBody);
+    const value: unknown = JSON.parse(rawBody);
+    return hasSafeDepth(value) ? { value } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** This parse is only a bounded lookup hint. Its values are attacker-controlled. */
+export function parseWebhookRoutingHint(
+  rawBody: unknown,
+): UntrustedWebhookRoutingHint | null {
+  const bounded = parseBoundedWebhookJson(rawBody);
+  if (bounded === null) return null;
+  try {
+    const parsed = bounded.value;
     if (
       !hasSafeDepth(parsed) ||
       typeof parsed !== 'object' ||

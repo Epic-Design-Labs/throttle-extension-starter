@@ -6,6 +6,7 @@ import {
   verifyThrottleWebhook,
   verifyWebhookSignature,
 } from './webhooks.js';
+import { MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_JSON_DEPTH } from './events.js';
 
 const rawBody =
   '{"id":"evt_1","type":"deployment.created","workspaceId":"ws_1","environmentId":"env_1","createdAt":"2026-01-01T00:00:00.000Z","data":{}}';
@@ -14,6 +15,23 @@ const timestamp = 1_767_225_600;
 const digest =
   'ccfa0262d8bd7bba53bf18ed39e92d97e61898341d4bf387e79ff2470c2c9368';
 const signature = `t=${timestamp},v1=${digest}`;
+const signBody = async (body: string): Promise<string> => {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const bytes = new Uint8Array(
+    await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(`${timestamp}.${body}`),
+    ),
+  );
+  return `t=${timestamp},v1=${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+};
 
 describe('verifyWebhookSignature', () => {
   it('accepts the exact signed raw body at the tolerance boundary', async () => {
@@ -206,6 +224,51 @@ it('returns a trusted event and matched installation only after header checks', 
       signature,
       eventId: 'wrong',
       eventType: 'deployment.created',
+      candidates: [{ installationId: 'inst_1', signingSecret: secret }],
+      now: timestamp,
+    }),
+  ).resolves.toBeNull();
+});
+
+it('rejects an oversized body even when its signature and schema are valid', async () => {
+  const body = JSON.stringify({
+    id: 'evt_big',
+    type: 'big',
+    workspaceId: 'ws_1',
+    environmentId: 'env_1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    data: { padding: 'x'.repeat(MAX_WEBHOOK_BODY_BYTES) },
+  });
+  await expect(
+    verifyThrottleWebhook({
+      rawBody: body,
+      signature: await signBody(body),
+      eventId: 'evt_big',
+      eventType: 'big',
+      candidates: [{ installationId: 'inst_1', signingSecret: secret }],
+      now: timestamp,
+    }),
+  ).resolves.toBeNull();
+});
+
+it('rejects excessive JSON nesting even when its signature and schema are valid', async () => {
+  let nested: unknown = 'leaf';
+  for (let depth = 0; depth <= MAX_WEBHOOK_JSON_DEPTH; depth += 1)
+    nested = { nested };
+  const body = JSON.stringify({
+    id: 'evt_deep',
+    type: 'deep',
+    workspaceId: 'ws_1',
+    environmentId: 'env_1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    data: { nested },
+  });
+  await expect(
+    verifyThrottleWebhook({
+      rawBody: body,
+      signature: await signBody(body),
+      eventId: 'evt_deep',
+      eventType: 'deep',
       candidates: [{ installationId: 'inst_1', signingSecret: secret }],
       now: timestamp,
     }),

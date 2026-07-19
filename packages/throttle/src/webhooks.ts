@@ -1,5 +1,8 @@
 import { throttleEventSchema, type ThrottleEvent } from '@starter/contracts';
-import { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from './events.js';
+import {
+  MAX_WEBHOOK_VERIFICATION_CANDIDATES,
+  parseBoundedWebhookJson,
+} from './events.js';
 
 const HEX_SHA256 = /^[0-9a-fA-F]{64}$/u;
 const DEFAULT_TOLERANCE_SECONDS = 300;
@@ -136,6 +139,8 @@ export async function verifyThrottleWebhook(input: {
     input.eventType.length === 0
   )
     return null;
+  const boundedBody = parseBoundedWebhookJson(input.rawBody);
+  if (boundedBody === null) return null;
   if (
     !input.candidates.every(
       (candidate) =>
@@ -162,7 +167,7 @@ export async function verifyThrottleWebhook(input: {
   if (matchingInstallationIds.size !== 1) return null;
   const installationId = matchingInstallationIds.values().next().value!;
   try {
-    const event = throttleEventSchema.parse(JSON.parse(input.rawBody));
+    const event = throttleEventSchema.parse(boundedBody.value);
     return event.id === input.eventId && event.type === input.eventType
       ? { installationId, event }
       : null;

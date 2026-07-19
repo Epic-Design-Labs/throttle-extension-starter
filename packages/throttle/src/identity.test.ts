@@ -1,8 +1,14 @@
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { beforeAll, expect, it } from 'vitest';
-import { createExtensionIdentityVerifier } from './identity.js';
+import {
+  createExtensionIdentityVerifier,
+  MAX_EXTENSION_CLAIM_STRING_LENGTH,
+  MAX_EXTENSION_SCOPE_LENGTH,
+  MAX_EXTENSION_TOKEN_BYTES,
+} from './identity.js';
 
 let privateKey: CryptoKey;
+let untrustedPrivateKey: CryptoKey;
 let verifier: ReturnType<typeof createExtensionIdentityVerifier>;
 const fixedNowSeconds = 1_800_000_000;
 const claims = {
@@ -25,6 +31,7 @@ const claims = {
 beforeAll(async () => {
   const pair = await generateKeyPair('RS256', { extractable: true });
   privateKey = pair.privateKey;
+  untrustedPrivateKey = (await generateKeyPair('RS256')).privateKey;
   const jwk = await exportJWK(pair.publicKey);
   jwk.kid = 'key-1';
   jwk.alg = 'RS256';
@@ -103,27 +110,125 @@ it('accepts and exposes an optional nonempty user name', async () => {
     verifier.verify(await token({ user: { ...claims.user, name: '' } })),
   ).rejects.toMatchObject({ code: 'authenticationError' });
 });
-it('rejects wrong issuer, audience, expiry, future nbf, and unknown kid', async () => {
-  const base = new SignJWT(claims)
-    .setProtectedHeader({ alg: 'RS256', kid: 'missing' })
-    .setIssuer('wrong')
-    .setSubject('inst_1')
-    .setAudience('wrong')
-    .setExpirationTime(0);
+it('bounds identity strings and individual scopes', async () => {
   await expect(
-    verifier.verify(await base.sign(privateKey)),
+    verifier.verify(
+      await token({
+        workspace: {
+          ...claims.workspace,
+          id: 'a'.repeat(MAX_EXTENSION_CLAIM_STRING_LENGTH),
+        },
+        scopes: ['a'.repeat(MAX_EXTENSION_SCOPE_LENGTH)],
+      }),
+    ),
+  ).resolves.toMatchObject({
+    workspaceId: 'a'.repeat(MAX_EXTENSION_CLAIM_STRING_LENGTH),
+  });
+  await expect(
+    verifier.verify(
+      await token({
+        workspace: {
+          ...claims.workspace,
+          id: 'a'.repeat(MAX_EXTENSION_CLAIM_STRING_LENGTH + 1),
+        },
+      }),
+    ),
   ).rejects.toMatchObject({ code: 'authenticationError' });
-  const future = new SignJWT(claims)
+  await expect(
+    verifier.verify(
+      await token({ scopes: ['a'.repeat(MAX_EXTENSION_SCOPE_LENGTH + 1)] }),
+    ),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects tokens above the documented UTF-8 byte limit', async () => {
+  expect(
+    new TextEncoder().encode(await token()).byteLength,
+  ).toBeLessThanOrEqual(MAX_EXTENSION_TOKEN_BYTES);
+  await expect(
+    verifier.verify('é'.repeat(MAX_EXTENSION_TOKEN_BYTES)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('requires HTTPS for production remote JWKS URLs', () => {
+  expect(() =>
+    createExtensionIdentityVerifier({
+      extensionId: 'ext_1',
+      jwksUrl: 'http://example.test/jwks',
+    }),
+  ).toThrow();
+  expect(() =>
+    createExtensionIdentityVerifier({
+      extensionId: 'ext_1',
+      jwksUrl: 'https://example.test/jwks',
+    }),
+  ).not.toThrow();
+});
+const standardToken = () =>
+  new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
     .setIssuer('throttle')
     .setSubject('inst_1')
     .setAudience('ext_1')
     .setIssuedAt(fixedNowSeconds)
-    .setNotBefore(fixedNowSeconds + 60)
+    .setNotBefore(fixedNowSeconds)
     .setExpirationTime(fixedNowSeconds + 600);
+
+it('rejects an invalid signature', async () => {
   await expect(
-    verifier.verify(await future.sign(privateKey)),
+    verifier.verify(await standardToken().sign(untrustedPrivateKey)),
   ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects a wrong issuer', async () => {
+  await expect(
+    verifier.verify(await standardToken().setIssuer('other').sign(privateKey)),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects a wrong audience', async () => {
+  await expect(
+    verifier.verify(
+      await standardToken().setAudience('other').sign(privateKey),
+    ),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects an expired token', async () => {
+  await expect(
+    verifier.verify(
+      await standardToken()
+        .setExpirationTime(fixedNowSeconds - 1)
+        .sign(privateKey),
+    ),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects a future nbf', async () => {
+  await expect(
+    verifier.verify(
+      await standardToken()
+        .setNotBefore(fixedNowSeconds + 60)
+        .sign(privateKey),
+    ),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects an unknown kid', async () => {
+  await expect(
+    verifier.verify(
+      await standardToken()
+        .setProtectedHeader({ alg: 'RS256', kid: 'missing' })
+        .sign(privateKey),
+    ),
+  ).rejects.toMatchObject({ code: 'authenticationError' });
+});
+it('rejects a non-RS256 algorithm', async () => {
+  const hsToken = await new SignJWT(claims)
+    .setProtectedHeader({ alg: 'HS256', kid: 'key-1' })
+    .setIssuer('throttle')
+    .setSubject('inst_1')
+    .setAudience('ext_1')
+    .setIssuedAt(fixedNowSeconds)
+    .setNotBefore(fixedNowSeconds)
+    .setExpirationTime(fixedNowSeconds + 600)
+    .sign(new TextEncoder().encode('a sufficiently long untrusted hmac key'));
+  await expect(verifier.verify(hsToken)).rejects.toMatchObject({
+    code: 'authenticationError',
+  });
 });
 it('requires standard expiration, not-before, and issued-at claims', async () => {
   const missingTimes = new SignJWT(claims)
@@ -135,7 +240,7 @@ it('requires standard expiration, not-before, and issued-at claims', async () =>
     verifier.verify(await missingTimes.sign(privateKey)),
   ).rejects.toMatchObject({ code: 'authenticationError' });
 });
-it('enforces exact audience shape and fixed issuer configuration', async () => {
+it('rejects a multi-value audience even when one value matches', async () => {
   const multipleAudiences = new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
     .setIssuer('throttle')
@@ -146,17 +251,6 @@ it('enforces exact audience shape and fixed issuer configuration', async () => {
     .setExpirationTime(fixedNowSeconds + 600);
   await expect(
     verifier.verify(await multipleAudiences.sign(privateKey)),
-  ).rejects.toMatchObject({ code: 'authenticationError' });
-  const wrongIssuer = new SignJWT(claims)
-    .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
-    .setIssuer('other')
-    .setSubject('inst_1')
-    .setAudience('ext_1')
-    .setIssuedAt(fixedNowSeconds)
-    .setNotBefore(fixedNowSeconds)
-    .setExpirationTime(fixedNowSeconds + 600);
-  await expect(
-    verifier.verify(await wrongIssuer.sign(privateKey)),
   ).rejects.toMatchObject({ code: 'authenticationError' });
 });
 it('rejects a token missing only nbf', async () => {
