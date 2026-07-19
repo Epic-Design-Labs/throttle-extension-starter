@@ -35,6 +35,22 @@ describe('installation contract', () => {
     expect(installationSchema.parse(installation)).toEqual(installation);
   });
 
+  it('accepts the canonical uninstall timestamp', () => {
+    expect(
+      installationSchema.parse({
+        ...installation,
+        status: 'uninstalled',
+        uninstalledAt: createdAt,
+      }).uninstalledAt,
+    ).toBe(createdAt);
+  });
+
+  it('rejects the retired uninstallAt field', () => {
+    expect(() =>
+      installationSchema.parse({ ...installation, uninstallAt: createdAt }),
+    ).toThrow();
+  });
+
   it('rejects retired snake_case fields', () => {
     expect(() =>
       installationSchema.parse({
@@ -72,6 +88,13 @@ describe('Throttle event contract', () => {
       expect(() => throttleEventSchema.parse({ ...event, data })).toThrow();
     },
   );
+
+  it.each([
+    { provider: { constructor: { polluted: true } } },
+    { provider: [{ prototype: { polluted: true } }] },
+  ])('rejects dangerous keys nested in objects and arrays', (data) => {
+    expect(() => throttleEventSchema.parse({ ...event, data })).toThrow();
+  });
 });
 
 describe('connector job contract', () => {
