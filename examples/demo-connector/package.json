@@ -1,0 +1,23 @@
+{
+  "name": "@starter/demo-connector",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test": "vitest run",
+    "test:consumer": "node --input-type=module -e \"const demo=await import('@starter/demo-connector');if(!demo.createDemoProvider)throw new Error('missing export')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@starter/contracts": "workspace:*",
+    "@starter/core": "workspace:*"
+  }
+}

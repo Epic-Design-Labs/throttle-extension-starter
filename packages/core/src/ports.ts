@@ -16,12 +16,21 @@ export interface InstallationStore {
     installationId: string,
     scope: InstallationScope,
   ): Promise<Installation | undefined>;
+  /** Trusted worker lookup. IDs must originate from the verified internal enqueue path. */
+  getForJob(installationId: string): Promise<Installation | undefined>;
   upsert(installation: Installation): Promise<Installation>;
   markUninstalled(
     installationId: string,
     scope: InstallationScope,
     uninstalledAt: Date,
   ): Promise<void>;
+  /** Updates connector metadata while preserving installation identity and lifecycle. */
+  updateProviderAccountReference(
+    installationId: string,
+    scope: InstallationScope,
+    providerAccountReference: string,
+    updatedAt: Date,
+  ): Promise<Installation>;
   /**
    * Returns a bounded candidate set using untrusted webhook routing hints.
    * No returned installation is trusted until its per-install secret verifies
@@ -63,8 +72,21 @@ export interface JobQueue {
 }
 
 export interface ActivityStore {
+  /** Idempotent by activityId, allowing at-least-once job delivery. */
   append(activity: Activity): Promise<void>;
   list(input: { installationId: string; limit: number }): Promise<Activity[]>;
+}
+
+export type ConfigurationValue =
+  | null
+  | boolean
+  | number
+  | string
+  | ConfigurationValue[]
+  | { [key: string]: ConfigurationValue };
+export interface ConfigurationStore {
+  get(installationId: string): Promise<ConfigurationValue | undefined>;
+  set(installationId: string, configuration: ConfigurationValue): Promise<void>;
 }
 
 export interface Clock {

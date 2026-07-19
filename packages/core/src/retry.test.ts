@@ -171,8 +171,12 @@ describe('portable ports', () => {
   it('compile against in-memory fakes', () => {
     const installationStore: InstallationStore = {
       get: async () => undefined,
+      getForJob: async () => undefined,
       upsert: async (installation) => installation,
       markUninstalled: async () => undefined,
+      updateProviderAccountReference: async () => {
+        throw new Error('not implemented by fake');
+      },
       findWebhookVerificationCandidates: async () => [],
     };
     const credentialStore: CredentialStore = {

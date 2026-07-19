@@ -15,9 +15,21 @@ export type {
   PublicErrorShape,
 } from './errors.js';
 export type { ProviderConnector } from './provider.js';
+export { connectProvider } from './connect-provider.js';
+export type {
+  ConnectProviderDependencies,
+  ConnectProviderInput,
+} from './connect-provider.js';
+export { processConnectorEvent } from './process-event.js';
+export type {
+  ProcessConnectorEventDependencies,
+  ProcessConnectorEventResult,
+} from './process-event.js';
 export type {
   ActivityStore,
   Clock,
+  ConfigurationStore,
+  ConfigurationValue,
   CredentialStore,
   CredentialKind,
   DeliveryStore,

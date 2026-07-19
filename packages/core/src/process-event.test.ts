@@ -1,0 +1,206 @@
+import { describe, expect, test, vi } from 'vitest';
+import type { Activity, ConnectorJob, Installation } from '@starter/contracts';
+import { processConnectorEvent } from './process-event.js';
+import type { ProcessConnectorEventDependencies } from './process-event.js';
+import { RetryableProviderError, TerminalProviderError } from './errors.js';
+import { MAX_JOB_ATTEMPTS } from './retry.js';
+
+const install: Installation = {
+  installationId: 'i',
+  workspaceId: 'w',
+  applicationId: 'a',
+  environmentId: 'e',
+  environmentKind: 'non_production',
+  extensionVersion: '1',
+  status: 'active',
+  createdAt: '2026-07-19T00:00:00.000Z',
+  updatedAt: '2026-07-19T00:00:00.000Z',
+};
+const job: ConnectorJob = {
+  jobId: 'j',
+  installationId: 'i',
+  attempt: 1,
+  createdAt: '2026-07-19T00:00:00.000Z',
+  event: {
+    id: 'evt',
+    type: 'order.created',
+    workspaceId: 'w',
+    environmentId: 'e',
+    createdAt: '2026-07-19T00:00:00.000Z',
+    data: { orderId: 'o' },
+  },
+};
+function setup(
+  handleEvent: ProcessConnectorEventDependencies['connector']['handleEvent'] = vi.fn(
+    async () => undefined,
+  ),
+) {
+  let current: Installation | undefined = install;
+  const activities: Activity[] = [];
+  const deps: ProcessConnectorEventDependencies = {
+    installations: {
+      get: vi.fn(),
+      getForJob: vi.fn(async () => current),
+      upsert: vi.fn(),
+      markUninstalled: vi.fn(),
+      findWebhookVerificationCandidates: vi.fn(async () => []),
+      updateProviderAccountReference: vi.fn(),
+    },
+    credentials: {
+      get: vi.fn(async () => new TextEncoder().encode('secret')),
+      set: vi.fn(),
+      delete: vi.fn(),
+    },
+    configurations: {
+      get: vi.fn(async () => ({ mode: 'normal' })),
+      set: vi.fn(),
+    },
+    activities: {
+      append: vi.fn(async (a) => {
+        if (!activities.some((x) => x.activityId === a.activityId))
+          activities.push(a);
+      }),
+      list: vi.fn(async () => []),
+    },
+    connector: { validateCredentials: vi.fn(), handleEvent },
+    clock: { now: () => new Date('2026-07-19T01:00:00.000Z') },
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  };
+  return {
+    deps,
+    activities,
+    setInstallation: (value: Installation | undefined) => {
+      current = value;
+    },
+  };
+}
+describe('processConnectorEvent', () => {
+  test('processes an accepted active scoped job and records one successful attempt', async () => {
+    const f = setup();
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'success',
+    });
+    expect(f.deps.connector.handleEvent).toHaveBeenCalledOnce();
+    expect(f.activities).toMatchObject([
+      {
+        activityId: 'j:1',
+        installationId: 'i',
+        jobId: 'j',
+        eventId: 'evt',
+        status: 'completed',
+        result: 'success',
+        attempt: 1,
+      },
+    ]);
+  });
+  test.each(['pending', 'disconnected', 'uninstalled'] as const)(
+    'rejects %s state without provider work',
+    async (status) => {
+      const f = setup();
+      f.setInstallation(
+        status === 'uninstalled'
+          ? { ...install, status, uninstalledAt: '2026-07-19T00:30:00.000Z' }
+          : { ...install, status },
+      );
+      expect(await processConnectorEvent(job, f.deps)).toEqual({
+        status: 'terminal',
+        code: 'INSTALLATION_INACTIVE',
+      });
+      expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+    },
+  );
+  test('rejects an installation or environment mismatch', async () => {
+    const f = setup();
+    f.setInstallation({ ...install, environmentId: 'other' });
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'terminal',
+      code: 'INSTALLATION_SCOPE_MISMATCH',
+    });
+    expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+  });
+  test.each([
+    ['configuration', undefined],
+    ['credential', null],
+  ] as const)(
+    'returns actionable terminal result for missing %s',
+    async (kind, value) => {
+      const f = setup();
+      if (kind === 'configuration')
+        (
+          f.deps.configurations.get as ReturnType<typeof vi.fn>
+        ).mockResolvedValue(value);
+      else
+        (f.deps.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+          undefined,
+        );
+      expect(await processConnectorEvent(job, f.deps)).toEqual({
+        status: 'terminal',
+        code:
+          kind === 'configuration'
+            ? 'CONFIGURATION_MISSING'
+            : 'CREDENTIAL_MISSING',
+      });
+    },
+  );
+  test('maps retryable provider errors to bounded retry', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new RetryableProviderError();
+      }),
+    );
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'retry',
+      delaySeconds: 5,
+      code: 'RETRYABLE_PROVIDER_ERROR',
+    });
+  });
+  test('supports zero-based first-attempt jobs', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new RetryableProviderError();
+      }),
+    );
+    expect(await processConnectorEvent({ ...job, attempt: 0 }, f.deps)).toEqual(
+      { status: 'retry', delaySeconds: 5, code: 'RETRYABLE_PROVIDER_ERROR' },
+    );
+  });
+  test('maps terminal provider errors without exposing their causes', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new TerminalProviderError({
+          cause: { body: 'credential=secret' },
+        });
+      }),
+    );
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'terminal',
+      code: 'TERMINAL_PROVIDER_ERROR',
+    });
+    expect(JSON.stringify(f.activities)).not.toContain('secret');
+  });
+  test('retries unexpected errors as infrastructure failures, then exhausts', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new Error('raw provider body secret');
+      }),
+    );
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'retry',
+      delaySeconds: 5,
+      code: 'INFRASTRUCTURE_ERROR',
+    });
+    expect(
+      await processConnectorEvent(
+        { ...job, attempt: MAX_JOB_ATTEMPTS },
+        f.deps,
+      ),
+    ).toEqual({ status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' });
+    expect(JSON.stringify(f.activities)).not.toContain('raw provider');
+  });
+  test('records a duplicate execution attempt idempotently', async () => {
+    const f = setup();
+    await processConnectorEvent(job, f.deps);
+    await processConnectorEvent(job, f.deps);
+    expect(f.activities).toHaveLength(1);
+  });
+});

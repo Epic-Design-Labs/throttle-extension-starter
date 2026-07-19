@@ -56,6 +56,36 @@ export class D1InstallationStore implements InstallationStore {
       .first<Row>();
     return row === null ? undefined : map(row);
   }
+  async getForJob(installationId: string): Promise<Installation | undefined> {
+    const row = await this.db
+      .prepare(`SELECT ${columns} FROM installations WHERE installation_id = ?`)
+      .bind(requireText(installationId, 'installationId'))
+      .first<Row>();
+    return row === null ? undefined : map(row);
+  }
+  async updateProviderAccountReference(
+    installationId: string,
+    scope: InstallationScope,
+    providerAccountReference: string,
+    updatedAt: Date,
+  ): Promise<Installation> {
+    const result = await this.db
+      .prepare(
+        `UPDATE installations SET provider_account_reference = ?, updated_at = ? WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'active'`,
+      )
+      .bind(
+        requireText(providerAccountReference, 'providerAccountReference'),
+        updatedAt.toISOString(),
+        requireText(installationId, 'installationId'),
+        requireText(scope.workspaceId, 'workspaceId'),
+        requireText(scope.applicationId, 'applicationId'),
+        requireText(scope.environmentId, 'environmentId'),
+      )
+      .run();
+    if (result.meta.changes !== 1)
+      throw new Error('Active scoped installation not found');
+    return (await this.get(installationId, scope))!;
+  }
   async upsert(value: Installation): Promise<Installation> {
     const item = installationSchema.parse(value);
     if (item.status === 'uninstalled')

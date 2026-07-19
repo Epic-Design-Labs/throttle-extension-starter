@@ -150,6 +150,92 @@ runPersistenceAdapterContract({
 });
 
 describe('D1 schema', () => {
+  test('trusted job lookup reloads state while provider reference update remains scoped and lifecycle-safe', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const value = {
+      installationId: 'job-installation',
+      workspaceId: 'job-workspace',
+      applicationId: 'job-app',
+      environmentId: 'job-env',
+      environmentKind: 'non_production' as const,
+      extensionVersion: '1',
+      status: 'active' as const,
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    };
+    await adapters.installations.upsert(value);
+    expect(
+      await adapters.installations.getForJob(value.installationId),
+    ).toEqual(value);
+    await expect(
+      adapters.installations.updateProviderAccountReference(
+        value.installationId,
+        {
+          workspaceId: 'wrong',
+          applicationId: value.applicationId,
+          environmentId: value.environmentId,
+        },
+        'account',
+        new Date('2026-07-19T11:00:00.000Z'),
+      ),
+    ).rejects.toThrow();
+    const updated = await adapters.installations.updateProviderAccountReference(
+      value.installationId,
+      value,
+      'account',
+      new Date('2026-07-19T11:00:00.000Z'),
+    );
+    expect(updated.workspaceId).toBe(value.workspaceId);
+    expect(updated.providerAccountReference).toBe('account');
+    await adapters.installations.markUninstalled(
+      value.installationId,
+      value,
+      new Date('2026-07-19T12:00:00.000Z'),
+    );
+    await expect(
+      adapters.installations.updateProviderAccountReference(
+        value.installationId,
+        value,
+        'other',
+        new Date('2026-07-19T13:00:00.000Z'),
+      ),
+    ).rejects.toThrow();
+  });
+
+  test('activity append is idempotent by activity id', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    await adapters.installations.upsert({
+      installationId: 'activity-installation',
+      workspaceId: 'activity-workspace',
+      applicationId: 'activity-app',
+      environmentId: 'activity-env',
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const value = {
+      activityId: 'attempt-once',
+      installationId: 'activity-installation',
+      jobId: 'job',
+      eventId: 'event',
+      type: 'connector_sync' as const,
+      status: 'completed' as const,
+      result: 'success' as const,
+      attempt: 1,
+      createdAt: '2026-07-19T10:00:00.000Z',
+    };
+    await adapters.activities.append(value);
+    await adapters.activities.append(value);
+    expect(
+      await adapters.activities.list({
+        installationId: value.installationId,
+        limit: 10,
+      }),
+    ).toHaveLength(1);
+  });
+
   test('stores encrypted envelope fields and no plaintext secret column', async () => {
     const columns = await database
       .prepare('PRAGMA table_info(secrets)')
