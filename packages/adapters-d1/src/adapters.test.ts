@@ -318,6 +318,118 @@ describe('D1 schema', () => {
     ).toBe('claimed');
   });
 
+  test('uninstall cancels processing jobs and late finish cannot resurrect them', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'race-uninstall-workspace',
+      applicationId: 'race-uninstall-app',
+      environmentId: 'race-uninstall-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'race-uninstall-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const at = '2026-07-19T10:00:00.000Z';
+    await database
+      .prepare(
+        'INSERT INTO jobs (job_id,installation_id,payload_reference,attempt,status,scheduled_at,created_at,updated_at,lease_expires_at) VALUES (?,?,?,0,?,?,?,?,NULL)',
+      )
+      .bind(
+        'race-uninstall-job',
+        'race-uninstall-installation',
+        'ref',
+        'pending',
+        at,
+        at,
+        at,
+      )
+      .run();
+    await database.batch([
+      database
+        .prepare(
+          'INSERT INTO jobs (job_id,installation_id,payload_reference,attempt,status,scheduled_at,created_at,updated_at,lease_expires_at) VALUES (?,?,?,1,?,?,?,?,NULL)',
+        )
+        .bind(
+          'race-completed-job',
+          'race-uninstall-installation',
+          'ref',
+          'completed',
+          at,
+          at,
+          at,
+        ),
+      database
+        .prepare(
+          'INSERT INTO jobs (job_id,installation_id,payload_reference,attempt,status,scheduled_at,created_at,updated_at,lease_expires_at) VALUES (?,?,?,1,?,?,?,?,NULL)',
+        )
+        .bind(
+          'race-failed-job',
+          'race-uninstall-installation',
+          'ref',
+          'failed',
+          at,
+          at,
+          at,
+        ),
+    ]);
+    expect(
+      await adapters.executions.claim({
+        jobId: 'race-uninstall-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toBe('claimed');
+    await adapters.installations.markUninstalled(
+      'race-uninstall-installation',
+      scope,
+      new Date('2026-07-19T10:01:00.000Z'),
+    );
+    expect(
+      await adapters.executions.finish({
+        jobId: 'race-uninstall-job',
+        attempt: 1,
+        status: 'retry',
+        now: new Date('2026-07-19T10:02:00.000Z'),
+      }),
+    ).toBe('cancelled');
+    expect(
+      await adapters.executions.claim({
+        jobId: 'race-uninstall-job',
+        attempt: 1,
+        now: new Date('2026-07-19T11:00:00.000Z'),
+      }),
+    ).toBe('duplicate');
+    expect(
+      (
+        await database
+          .prepare('SELECT status FROM jobs WHERE job_id=?')
+          .bind('race-uninstall-job')
+          .first<{ status: string }>()
+      )?.status,
+    ).toBe('cancelled');
+    expect(
+      (
+        await database
+          .prepare('SELECT status FROM jobs WHERE job_id=?')
+          .bind('race-completed-job')
+          .first<{ status: string }>()
+      )?.status,
+    ).toBe('completed');
+    expect(
+      (
+        await database
+          .prepare('SELECT status FROM jobs WHERE job_id=?')
+          .bind('race-failed-job')
+          .first<{ status: string }>()
+      )?.status,
+    ).toBe('failed');
+  });
+
   test('provider connection commit rolls back account metadata when secret persistence fails', async () => {
     const adapters = createD1Adapters({ database, credentialKeys: keyring });
     const scope = {

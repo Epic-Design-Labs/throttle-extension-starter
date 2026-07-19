@@ -174,7 +174,7 @@ export class D1InstallationStore implements InstallationStore {
         ),
       this.db
         .prepare(
-          `UPDATE jobs SET status='cancelled', updated_at=? WHERE installation_id=? AND status IN ('pending','retry') AND EXISTS (SELECT 1 FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'uninstalled')`,
+          `UPDATE jobs SET status='cancelled', updated_at=?, lease_expires_at=NULL WHERE installation_id=? AND status IN ('pending','retry','processing') AND EXISTS (SELECT 1 FROM installations WHERE installation_id = ? AND workspace_id = ? AND application_id = ? AND environment_id = ? AND status = 'uninstalled')`,
         )
         .bind(
           timestamp,

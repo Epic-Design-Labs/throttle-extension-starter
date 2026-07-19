@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { Activity, ConnectorJob, Installation } from '@starter/contracts';
-import { processConnectorEvent } from './process-event.js';
+import {
+  connectorIdempotencyKey,
+  processConnectorEvent,
+} from './process-event.js';
 import type { ProcessConnectorEventDependencies } from './process-event.js';
 import {
   InfrastructureError,
@@ -68,7 +71,7 @@ function setup(
     },
     executions: {
       claim: vi.fn(async () => 'claimed' as const),
-      finish: vi.fn(async () => undefined),
+      finish: vi.fn(async () => 'finished' as const),
     },
     connector: { validateCredentials: vi.fn(), handleEvent },
     clock: { now: () => new Date('2026-07-19T01:00:00.000Z') },
@@ -90,7 +93,7 @@ describe('processConnectorEvent', () => {
     });
     expect(f.deps.connector.handleEvent).toHaveBeenCalledOnce();
     expect(f.deps.connector.handleEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey: 'evt' }),
+      expect.objectContaining({ idempotencyKey: '["i","evt"]' }),
     );
     expect(f.deps.executions.finish).toHaveBeenCalledWith(
       expect.objectContaining({ jobId: 'j', attempt: 1, status: 'completed' }),
@@ -127,7 +130,32 @@ describe('processConnectorEvent', () => {
     );
     await processConnectorEvent(job, f.deps);
     await processConnectorEvent({ ...job, attempt: 2 }, f.deps);
-    expect(keys).toEqual(['evt', 'evt']);
+    expect(keys).toEqual(['["i","evt"]', '["i","evt"]']);
+  });
+  test('namespaces equal event IDs by installation without delimiter ambiguity', () => {
+    expect(connectorIdempotencyKey('installation-a', 'same-event')).not.toBe(
+      connectorIdempotencyKey('installation-b', 'same-event'),
+    );
+    expect(connectorIdempotencyKey('a:b', 'c')).not.toBe(
+      connectorIdempotencyKey('a', 'b:c'),
+    );
+  });
+  test('does not requeue when uninstall cancels a claimed job during provider work', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new RetryableProviderError();
+      }),
+    );
+    (f.deps.executions.finish as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'cancelled',
+    );
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'terminal',
+      code: 'JOB_CANCELLED',
+    });
+    expect(f.deps.executions.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'retry' }),
+    );
   });
   test('redelivery after activity persistence failure reuses the stable provider key', async () => {
     const keys: string[] = [];
@@ -147,7 +175,7 @@ describe('processConnectorEvent', () => {
     expect(await processConnectorEvent(job, f.deps)).toEqual({
       status: 'success',
     });
-    expect(keys).toEqual(['evt', 'evt']);
+    expect(keys).toEqual(['["i","evt"]', '["i","evt"]']);
     expect(f.deps.executions.finish).toHaveBeenCalledTimes(2);
   });
   test('wipes the credential buffer returned by the store', async () => {

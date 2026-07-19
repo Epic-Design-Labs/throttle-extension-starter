@@ -1,4 +1,8 @@
-import type { JobClaimResult, JobExecutionStore } from '@starter/core';
+import type {
+  JobClaimResult,
+  JobExecutionStore,
+  JobFinishResult,
+} from '@starter/core';
 import type { D1Database } from './database.js';
 import { requireText } from './database.js';
 
@@ -40,7 +44,7 @@ export class D1JobExecutionStore implements JobExecutionStore {
     attempt: number;
     status: 'completed' | 'retry' | 'failed';
     now: Date;
-  }): Promise<void> {
+  }): Promise<JobFinishResult> {
     const result = await this.db
       .prepare(
         "UPDATE jobs SET status=?, updated_at=?, lease_expires_at=NULL WHERE job_id=? AND status='processing' AND attempt=?",
@@ -52,7 +56,11 @@ export class D1JobExecutionStore implements JobExecutionStore {
         input.attempt,
       )
       .run();
-    if (result.meta.changes !== 1)
-      throw new Error('Claimed job execution not found');
+    if (result.meta.changes === 1) return 'finished';
+    const existing = await this.db
+      .prepare('SELECT status FROM jobs WHERE job_id=? AND attempt=?')
+      .bind(input.jobId, input.attempt)
+      .first<{ status: string }>();
+    return existing?.status === 'cancelled' ? 'cancelled' : 'stale';
   }
 }

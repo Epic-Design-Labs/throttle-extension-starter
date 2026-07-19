@@ -20,7 +20,10 @@ export type {
   ConnectProviderDependencies,
   ConnectProviderInput,
 } from './connect-provider.js';
-export { processConnectorEvent } from './process-event.js';
+export {
+  connectorIdempotencyKey,
+  processConnectorEvent,
+} from './process-event.js';
 export type {
   ProcessConnectorEventDependencies,
   ProcessConnectorEventResult,
@@ -36,6 +39,7 @@ export type {
   InstallationStore,
   JobClaimResult,
   JobExecutionStore,
+  JobFinishResult,
   InstallationScope,
   JobQueue,
   LogFields,

@@ -65,6 +65,13 @@ function makeActivity(
     createdAt: at.toISOString(),
   };
 }
+/** JSON tuple encoding is stable and cannot collide when IDs contain delimiters. */
+export function connectorIdempotencyKey(
+  installationId: string,
+  eventId: string,
+): string {
+  return JSON.stringify([installationId, eventId]);
+}
 async function finish(
   job: ConnectorJob,
   dependencies: ProcessConnectorEventDependencies,
@@ -87,12 +94,14 @@ async function finish(
     );
   } catch {
     const recoverable = job.attempt < MAX_JOB_ATTEMPTS;
-    await dependencies.executions.finish({
+    const execution = await dependencies.executions.finish({
       jobId: job.jobId,
       attempt: job.attempt,
       status: recoverable ? 'retry' : 'failed',
       now: dependencies.clock.now(),
     });
+    if (execution === 'cancelled')
+      return { status: 'terminal', code: 'JOB_CANCELLED' };
     dependencies.logger.warn('Connector activity persistence failed', {
       installationId: job.installationId,
       jobId: job.jobId,
@@ -107,7 +116,7 @@ async function finish(
         }
       : { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' };
   }
-  await dependencies.executions.finish({
+  const execution = await dependencies.executions.finish({
     jobId: job.jobId,
     attempt: job.attempt,
     status:
@@ -118,6 +127,9 @@ async function finish(
           : 'failed',
     now: dependencies.clock.now(),
   });
+  if (execution === 'cancelled')
+    return { status: 'terminal', code: 'JOB_CANCELLED' };
+  if (execution === 'stale') return { status: 'terminal', code: 'JOB_STALE' };
   return result;
 }
 
@@ -172,7 +184,7 @@ export async function processConnectorEvent(
   try {
     await dependencies.connector.handleEvent({
       event: job.event,
-      idempotencyKey: job.event.id,
+      idempotencyKey: connectorIdempotencyKey(job.installationId, job.event.id),
       credentials: credential,
       configuration,
     });

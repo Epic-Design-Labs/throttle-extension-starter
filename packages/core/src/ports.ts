@@ -61,6 +61,7 @@ export interface CredentialStore {
 }
 
 export type JobClaimResult = 'claimed' | 'duplicate' | 'unavailable';
+export type JobFinishResult = 'finished' | 'cancelled' | 'stale';
 export interface JobExecutionStore {
   /**
    * Pending/retry jobs claim only stored attempt + 1. An expired processing
@@ -77,7 +78,7 @@ export interface JobExecutionStore {
     attempt: number;
     status: 'completed' | 'retry' | 'failed';
     now: Date;
-  }): Promise<void>;
+  }): Promise<JobFinishResult>;
 }
 
 export interface ProviderConnectionStore {
