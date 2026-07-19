@@ -4,12 +4,16 @@ import type {
   Installation,
   WebhookVerificationCandidate,
 } from '@starter/contracts';
+import type { ConfigurationValue } from '@starter/contracts';
 
 export interface InstallationScope {
   workspaceId: string;
   applicationId: string;
   environmentId: string;
 }
+export type WebhookCandidateLookupResult =
+  | { status: 'ok'; candidates: WebhookVerificationCandidate[] }
+  | { status: 'overflow' };
 
 export interface InstallationStore {
   get(
@@ -39,7 +43,7 @@ export interface InstallationStore {
   findWebhookVerificationCandidates(input: {
     workspaceId: string;
     environmentId: string;
-  }): Promise<WebhookVerificationCandidate[]>;
+  }): Promise<WebhookCandidateLookupResult>;
 }
 
 export interface CredentialStore {
@@ -120,13 +124,6 @@ export interface ActivityStore {
   list(input: { installationId: string; limit: number }): Promise<Activity[]>;
 }
 
-export type ConfigurationValue =
-  | null
-  | boolean
-  | number
-  | string
-  | ConfigurationValue[]
-  | { [key: string]: ConfigurationValue };
 export interface ConfigurationStore {
   get(installationId: string): Promise<ConfigurationValue | undefined>;
   set(installationId: string, configuration: ConfigurationValue): Promise<void>;

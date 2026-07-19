@@ -4,7 +4,9 @@ import {
   activitySchema,
   connectorJobSchema,
   installationSchema,
+  MAX_CONFIGURATION_NODES,
   throttleEventSchema,
+  validateConfigurationValue,
   webhookVerificationCandidateSchema,
 } from './index.js';
 
@@ -74,6 +76,23 @@ describe('installation contract', () => {
     expect(() =>
       installationSchema.parse({ ...installation, region: 'west' }),
     ).toThrow();
+  });
+});
+
+describe('configuration JSON contract', () => {
+  it('rejects cycles, non-plain objects, dangerous keys, and excessive nodes', () => {
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(validateConfigurationValue(cycle)).toBe(false);
+    expect(validateConfigurationValue(new Date())).toBe(false);
+    expect(validateConfigurationValue(JSON.parse('{"__proto__":true}'))).toBe(
+      false,
+    );
+    expect(
+      validateConfigurationValue(
+        Array.from({ length: MAX_CONFIGURATION_NODES + 1 }, () => null),
+      ),
+    ).toBe(false);
   });
 });
 

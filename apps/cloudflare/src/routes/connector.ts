@@ -1,4 +1,4 @@
-import type { ConfigurationValue } from '@starter/core';
+import { validateConfigurationValue } from '@starter/contracts';
 import type { Hono } from 'hono';
 import type { AppBindings, AppDependencies } from '../app.js';
 import { identity, requireMutationRole } from '../middleware/auth.js';
@@ -40,21 +40,6 @@ async function activeInstallation(
       'The installation is not active.',
     );
   return installation;
-}
-
-function safeJson(value: unknown): value is ConfigurationValue {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string')
-    return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(safeJson);
-  if (typeof value !== 'object') return false;
-  return Object.keys(value).every(
-    (key) =>
-      key !== '__proto__' &&
-      key !== 'prototype' &&
-      key !== 'constructor' &&
-      safeJson((value as Record<string, unknown>)[key]),
-  );
 }
 
 async function jsonBody(c: Parameters<typeof identity>[0]): Promise<unknown> {
@@ -182,7 +167,7 @@ export function registerConnectorRoutes(
     requireMutationRole(c);
     const installation = await activeInstallation(c, dependencies);
     const configuration = await jsonBody(c);
-    if (!safeJson(configuration)) throw invalidRequest();
+    if (!validateConfigurationValue(configuration)) throw invalidRequest();
     await dependencies.configurations.set(
       installation.installationId,
       configuration,

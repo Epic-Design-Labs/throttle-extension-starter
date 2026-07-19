@@ -3,9 +3,12 @@ import {
   MAX_WEBHOOK_VERIFICATION_CANDIDATES,
   webhookVerificationCandidateSchema,
   type Installation,
-  type WebhookVerificationCandidate,
 } from '@starter/contracts';
-import { type InstallationScope, type InstallationStore } from '@starter/core';
+import {
+  type InstallationScope,
+  type InstallationStore,
+  type WebhookCandidateLookupResult,
+} from '@starter/core';
 import type { D1Database } from './database.js';
 import { requireText } from './database.js';
 
@@ -118,7 +121,7 @@ export class D1InstallationStore implements InstallationStore {
   async findWebhookVerificationCandidates(input: {
     workspaceId: string;
     environmentId: string;
-  }): Promise<WebhookVerificationCandidate[]> {
+  }): Promise<WebhookCandidateLookupResult> {
     const result = await this.db
       .prepare(
         `SELECT installation_id FROM installations WHERE workspace_id = ? AND environment_id = ? AND status != 'uninstalled' ORDER BY installation_id LIMIT ?`,
@@ -126,14 +129,19 @@ export class D1InstallationStore implements InstallationStore {
       .bind(
         requireText(input.workspaceId, 'workspaceId'),
         requireText(input.environmentId, 'environmentId'),
-        MAX_WEBHOOK_VERIFICATION_CANDIDATES,
+        MAX_WEBHOOK_VERIFICATION_CANDIDATES + 1,
       )
       .all<Row>();
-    return result.results.map((row) =>
-      webhookVerificationCandidateSchema.parse({
-        installationId: row.installation_id,
-      }),
-    );
+    if (result.results.length > MAX_WEBHOOK_VERIFICATION_CANDIDATES)
+      return { status: 'overflow' };
+    return {
+      status: 'ok',
+      candidates: result.results.map((row) =>
+        webhookVerificationCandidateSchema.parse({
+          installationId: row.installation_id,
+        }),
+      ),
+    };
   }
   /** D1 batch executes these statements as one transaction and rolls all back on failure. */
   async markUninstalled(

@@ -32,7 +32,6 @@ export type {
   ActivityStore,
   Clock,
   ConfigurationStore,
-  ConfigurationValue,
   CredentialStore,
   CredentialKind,
   DeliveryStore,
@@ -45,7 +44,9 @@ export type {
   LogFields,
   Logger,
   ProviderConnectionStore,
+  WebhookCandidateLookupResult,
 } from './ports.js';
+export type { ConfigurationValue } from '@starter/contracts';
 export { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from '@starter/contracts';
 export {
   classifyProviderFailure,

@@ -55,7 +55,10 @@ function fixture(overrides: Partial<AppDependencies> = {}) {
     readiness: vi.fn(async () => true),
     installations: {
       get: vi.fn(async () => installation),
-      findWebhookVerificationCandidates: vi.fn(async () => []),
+      findWebhookVerificationCandidates: vi.fn(async () => ({
+        status: 'ok' as const,
+        candidates: [],
+      })),
     },
     credentials: { get: vi.fn(async () => undefined) },
     bootstrap: vi.fn(async () => installation),
@@ -157,7 +160,10 @@ describe('worker HTTP application', () => {
     const { app } = fixture({
       installations: {
         get: vi.fn(async () => undefined),
-        findWebhookVerificationCandidates: vi.fn(async () => []),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [],
+        })),
       },
     });
     expect(
@@ -174,7 +180,10 @@ describe('worker HTTP application', () => {
     const { app, deps } = fixture({
       installations: {
         get: vi.fn(async () => uninstalled),
-        findWebhookVerificationCandidates: vi.fn(async () => []),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [],
+        })),
       },
     });
     for (const [path, method] of [
@@ -305,6 +314,28 @@ describe('worker HTTP application', () => {
     });
     expect(response.status).toBe(400);
     expect(deps.configurations.set).not.toHaveBeenCalled();
+  });
+
+  test('enforces the shared configuration depth boundary', async () => {
+    const nested = (depth: number): unknown => {
+      let value: unknown = 'leaf';
+      for (let index = 0; index < depth; index++) value = { value };
+      return value;
+    };
+    const { app, deps } = fixture();
+    const accepted = await app.request('/api/connector/config', {
+      method: 'PUT',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify(nested(20)),
+    });
+    expect(accepted.status).toBe(200);
+    const rejected = await app.request('/api/connector/config', {
+      method: 'PUT',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify(nested(21)),
+    });
+    expect(rejected.status).toBe(400);
+    expect(deps.configurations.set).toHaveBeenCalledTimes(1);
   });
 
   test('locks CORS to the configured HTTPS dashboard origin', async () => {
@@ -481,9 +512,10 @@ describe('Throttle webhook ingress', () => {
       },
       installations: {
         get: vi.fn(async () => installation),
-        findWebhookVerificationCandidates: vi.fn(async () => [
-          { installationId: 'install-1' },
-        ]),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [{ installationId: 'install-1' }],
+        })),
       },
       credentials: {
         get: vi.fn(async () => {
@@ -531,9 +563,10 @@ describe('Throttle webhook ingress', () => {
     const { app, deps, log } = fixture({
       installations: {
         get: vi.fn(async () => installation),
-        findWebhookVerificationCandidates: vi.fn(async () => [
-          { installationId: 'install-1' },
-        ]),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [{ installationId: 'install-1' }],
+        })),
       },
       credentials: {
         get: vi.fn(async () => new TextEncoder().encode(secret)),
@@ -564,9 +597,10 @@ describe('Throttle webhook ingress', () => {
     const { app, deps } = fixture({
       installations: {
         get: vi.fn(async () => installation),
-        findWebhookVerificationCandidates: vi.fn(async () => [
-          { installationId: 'install-1' },
-        ]),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [{ installationId: 'install-1' }],
+        })),
       },
       credentials: { get: vi.fn(async () => candidateSecret) },
     });
@@ -591,9 +625,10 @@ describe('Throttle webhook ingress', () => {
     const { app, deps } = fixture({
       installations: {
         get: vi.fn(async () => installation),
-        findWebhookVerificationCandidates: vi.fn(async () => [
-          { installationId: 'install-1' },
-        ]),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [{ installationId: 'install-1' }],
+        })),
       },
       credentials: { get: vi.fn(async () => undefined) },
     });
@@ -611,16 +646,45 @@ describe('Throttle webhook ingress', () => {
     expect(deps.queue.enqueue).not.toHaveBeenCalled();
   });
 
+  test('rejects candidate overflow before loading any signing secret', async () => {
+    const credentials = { get: vi.fn(async () => new Uint8Array([1])) };
+    const { app, deps } = fixture({
+      installations: {
+        get: vi.fn(async () => installation),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'overflow' as const,
+        })),
+      },
+      credentials,
+    });
+    const response = await app.request('/webhooks/throttle', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-throttle-signature': 'invalid',
+        'x-throttle-event-id': event.id,
+        'x-throttle-event-type': event.type,
+      },
+      body: JSON.stringify(event),
+    });
+    expect(response.status).toBe(401);
+    expect(credentials.get).not.toHaveBeenCalled();
+    expect(deps.queue.enqueue).not.toHaveBeenCalled();
+  });
+
   test('fails closed on ambiguous candidates and wipes every returned secret', async () => {
     const signed = await signedWebhook('shared-secret', event);
     const returned: Uint8Array[] = [];
     const { app, deps } = fixture({
       installations: {
         get: vi.fn(async () => installation),
-        findWebhookVerificationCandidates: vi.fn(async () => [
-          { installationId: 'install-1' },
-          { installationId: 'install-2' },
-        ]),
+        findWebhookVerificationCandidates: vi.fn(async () => ({
+          status: 'ok' as const,
+          candidates: [
+            { installationId: 'install-1' },
+            { installationId: 'install-2' },
+          ],
+        })),
       },
       credentials: {
         get: vi.fn(async () => {

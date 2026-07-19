@@ -16,13 +16,35 @@ import {
 } from '@starter/core';
 import { createDemoProvider } from '@starter/demo-connector';
 import { redact } from '@starter/security';
-import { createExtensionIdentityVerifier } from '@starter/throttle';
+import {
+  createExtensionIdentityVerifier,
+  type ExtensionIdentityVerifier,
+} from '@starter/throttle';
 import { createApp } from '../app.js';
 import type { Env } from '../env.js';
 import { validateEnv } from '../env.js';
 import { HttpError } from '../middleware/errors.js';
 
 const clock = { now: () => new Date() };
+const verifierCache = new Map<string, ExtensionIdentityVerifier>();
+const MAX_VERIFIER_CONFIGURATIONS = 8;
+
+export function getCachedIdentityVerifier(
+  config: { extensionId: string; jwksUrl: string },
+  factory: (config: {
+    extensionId: string;
+    jwksUrl: string;
+  }) => ExtensionIdentityVerifier = createExtensionIdentityVerifier,
+): ExtensionIdentityVerifier {
+  const key = JSON.stringify([config.jwksUrl, config.extensionId]);
+  const cached = verifierCache.get(key);
+  if (cached) return cached;
+  if (verifierCache.size >= MAX_VERIFIER_CONFIGURATIONS)
+    throw new Error('Too many identity verifier configurations');
+  const created = factory(config);
+  verifierCache.set(key, created);
+  return created;
+}
 
 function logger(): Logger {
   const write = (
@@ -83,7 +105,7 @@ export function composeWorker(rawEnv: Env) {
   const connector = createDemoProvider();
   const safeLogger = logger();
   const queueProducer = createCloudflareQueueProducer(env.queue);
-  const identityVerifier = createExtensionIdentityVerifier({
+  const identityVerifier = getCachedIdentityVerifier({
     extensionId: env.extensionId,
     jwksUrl: env.jwksUrl,
   });

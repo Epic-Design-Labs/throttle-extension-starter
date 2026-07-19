@@ -286,4 +286,44 @@ test('configuration is bounded safe JSON and retained only while installed', asy
   await expect(
     store.set(installation.installationId, 'x'.repeat(33 * 1024)),
   ).rejects.toThrow();
+  let deep: unknown = 'leaf';
+  for (let index = 0; index < 21; index++) deep = { value: deep };
+  await database
+    .prepare(
+      'UPDATE configurations SET configuration_json=? WHERE installation_id=?',
+    )
+    .bind(JSON.stringify(deep), installation.installationId)
+    .run();
+  await expect(store.get(installation.installationId)).rejects.toThrow(
+    'Stored configuration is invalid',
+  );
+});
+
+test('webhook candidate lookup reports overflow without returning a cutoff set', async () => {
+  const at = installation.createdAt;
+  await database.batch(
+    Array.from({ length: 101 }, (_, index) =>
+      database
+        .prepare(
+          "INSERT INTO installations (installation_id,workspace_id,application_id,environment_id,environment_kind,extension_version,status,created_at,updated_at) VALUES (?,?,?,?,?,'1','active',?,?)",
+        )
+        .bind(
+          `overflow-${index}`,
+          'overflow-workspace',
+          'overflow-app',
+          'overflow-env',
+          'non_production',
+          at,
+          at,
+        ),
+    ),
+  );
+  await expect(
+    new (await import('./installations.js')).D1InstallationStore(
+      database,
+    ).findWebhookVerificationCandidates({
+      workspaceId: 'overflow-workspace',
+      environmentId: 'overflow-env',
+    }),
+  ).resolves.toEqual({ status: 'overflow' });
 });

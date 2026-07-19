@@ -1,22 +1,15 @@
-import type { ConfigurationStore, ConfigurationValue } from '@starter/core';
+import {
+  validateConfigurationValue,
+  type ConfigurationValue,
+} from '@starter/contracts';
+import type { ConfigurationStore } from '@starter/core';
 import type { D1Database } from './database.js';
 import { requireText } from './database.js';
 
 const MAX_CONFIGURATION_BYTES = 32 * 1024;
-const dangerous = new Set(['__proto__', 'prototype', 'constructor']);
-function valid(value: unknown): value is ConfigurationValue {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string')
-    return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(valid);
-  if (typeof value !== 'object') return false;
-  return Object.keys(value).every(
-    (key) =>
-      !dangerous.has(key) && valid((value as Record<string, unknown>)[key]),
-  );
-}
 function serialize(value: unknown): string {
-  if (!valid(value)) throw new Error('Configuration must be safe JSON');
+  if (!validateConfigurationValue(value))
+    throw new Error('Configuration must be safe JSON');
   const text = JSON.stringify(value);
   if (new TextEncoder().encode(text).byteLength > MAX_CONFIGURATION_BYTES)
     throw new Error('Configuration exceeds maximum size');
@@ -34,7 +27,8 @@ export class D1ConfigurationStore implements ConfigurationStore {
       .first<{ configuration_json: string }>();
     if (row === null) return undefined;
     const value: unknown = JSON.parse(row.configuration_json);
-    if (!valid(value)) throw new Error('Stored configuration is invalid');
+    if (!validateConfigurationValue(value))
+      throw new Error('Stored configuration is invalid');
     return value;
   }
   async set(

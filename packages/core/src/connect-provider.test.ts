@@ -26,7 +26,10 @@ function setup(overrides: Partial<ConnectProviderDependencies> = {}) {
       getForJob: vi.fn(async () => current),
       upsert: vi.fn(),
       markUninstalled: vi.fn(),
-      findWebhookVerificationCandidates: vi.fn(async () => []),
+      findWebhookVerificationCandidates: vi.fn(async () => ({
+        status: 'ok' as const,
+        candidates: [],
+      })),
       updateProviderAccountReference: vi.fn(
         async (_id, _scope, reference, at) => {
           calls.push('installation');

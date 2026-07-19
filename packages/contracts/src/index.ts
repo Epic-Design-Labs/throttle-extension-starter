@@ -13,3 +13,9 @@ export type {
 } from './installation.js';
 export { connectorJobSchema } from './jobs.js';
 export type { ConnectorJob } from './jobs.js';
+export {
+  MAX_CONFIGURATION_DEPTH,
+  MAX_CONFIGURATION_NODES,
+  validateConfigurationValue,
+} from './configuration.js';
+export type { ConfigurationValue } from './configuration.js';

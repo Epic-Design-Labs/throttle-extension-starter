@@ -39,9 +39,15 @@ export function registerWebhookRoutes(
         'Webhook processing is temporarily unavailable.',
       );
     }
+    if (candidates.status === 'overflow')
+      throw new HttpError(
+        401,
+        'WEBHOOK_VERIFICATION_FAILED',
+        'Webhook verification failed.',
+      );
     if (
-      candidates.length === 0 ||
-      candidates.length > MAX_WEBHOOK_VERIFICATION_CANDIDATES
+      candidates.candidates.length === 0 ||
+      candidates.candidates.length > MAX_WEBHOOK_VERIFICATION_CANDIDATES
     )
       throw new HttpError(
         401,
@@ -54,7 +60,7 @@ export function registerWebhookRoutes(
         installationId: string;
         signingSecret: Uint8Array;
       }> = [];
-      for (const candidate of candidates) {
+      for (const candidate of candidates.candidates) {
         const secret = await dependencies.credentials.get(
           candidate.installationId,
           'webhookSigningSecret',

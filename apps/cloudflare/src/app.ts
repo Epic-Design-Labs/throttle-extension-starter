@@ -1,13 +1,10 @@
-import type {
-  ConnectorJob,
-  Installation,
-  WebhookVerificationCandidate,
-} from '@starter/contracts';
+import type { ConnectorJob, Installation } from '@starter/contracts';
 import type {
   ActivityStore,
   ConfigurationStore,
   CredentialKind,
   Logger,
+  WebhookCandidateLookupResult,
 } from '@starter/core';
 import type {
   ExtensionIdentityVerifier,
@@ -44,7 +41,7 @@ export interface AppDependencies {
     findWebhookVerificationCandidates(input: {
       workspaceId: string;
       environmentId: string;
-    }): Promise<WebhookVerificationCandidate[]>;
+    }): Promise<WebhookCandidateLookupResult>;
   };
   credentials: {
     get(id: string, kind: CredentialKind): Promise<Uint8Array | undefined>;

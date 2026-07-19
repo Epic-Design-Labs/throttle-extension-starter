@@ -201,12 +201,12 @@ export function runPersistenceAdapterContract(
       await fixture.cleanup();
     });
 
-    test('webhook candidates use only workspace/environment, are narrow, and cap at the shared maximum', async () => {
+    test('webhook candidates are narrow through the maximum and overflow fail closed', async () => {
       const fixture = await factory.create();
       const { installations } = fixture;
       await Promise.all(
         Array.from(
-          { length: MAX_WEBHOOK_VERIFICATION_CANDIDATES + 5 },
+          { length: MAX_WEBHOOK_VERIFICATION_CANDIDATES },
           (_, index) =>
             installations.upsert(
               installation({
@@ -232,21 +232,37 @@ export function runPersistenceAdapterContract(
         workspaceId: 'workspace-a',
         environmentId: 'environment-a',
       });
-      expect(candidates).toHaveLength(MAX_WEBHOOK_VERIFICATION_CANDIDATES);
+      expect(candidates.status).toBe('ok');
+      if (candidates.status !== 'ok') throw new Error('expected candidates');
+      expect(candidates.candidates).toHaveLength(
+        MAX_WEBHOOK_VERIFICATION_CANDIDATES,
+      );
       expect(
-        candidates.every(
+        candidates.candidates.every(
           (candidate) =>
             Object.keys(candidate).length === 1 &&
             typeof candidate.installationId === 'string',
         ),
       ).toBe(true);
       expect(
-        candidates.some(
+        candidates.candidates.some(
           ({ installationId }) =>
             installationId === 'wrong-workspace' ||
             installationId === 'wrong-environment',
         ),
       ).toBe(false);
+      await installations.upsert(
+        installation({
+          installationId: 'candidate-overflow',
+          applicationId: 'overflow-app',
+        }),
+      );
+      expect(
+        await installations.findWebhookVerificationCandidates({
+          workspaceId: 'workspace-a',
+          environmentId: 'environment-a',
+        }),
+      ).toEqual({ status: 'overflow' });
       await fixture.cleanup();
     });
 

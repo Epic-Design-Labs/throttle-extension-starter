@@ -1,6 +1,10 @@
 import { expect, test, vi } from 'vitest';
 import { InstallationBootstrapError } from '@starter/adapters-d1';
-import { createQueueEntrypoint, mapBootstrapError } from './index.js';
+import {
+  createQueueEntrypoint,
+  getCachedIdentityVerifier,
+  mapBootstrapError,
+} from './index.js';
 
 const event = {
   id: 'event-1',
@@ -71,3 +75,24 @@ test.each([
     expect(mapped).toMatchObject({ status, code });
   },
 );
+
+test('reuses verifier by stable config across distinct env wrappers', () => {
+  const factory = vi.fn((config: { extensionId: string }) => ({
+    verify: vi.fn(async () => ({ extensionId: config.extensionId }) as never),
+  }));
+  const first = getCachedIdentityVerifier(
+    { extensionId: 'ext-one', jwksUrl: 'https://example.test/jwks' },
+    factory,
+  );
+  const equivalent = getCachedIdentityVerifier(
+    { extensionId: 'ext-one', jwksUrl: 'https://example.test/jwks' },
+    factory,
+  );
+  const differentAudience = getCachedIdentityVerifier(
+    { extensionId: 'ext-two', jwksUrl: 'https://example.test/jwks' },
+    factory,
+  );
+  expect(equivalent).toBe(first);
+  expect(differentAudience).not.toBe(first);
+  expect(factory).toHaveBeenCalledTimes(2);
+});

@@ -177,7 +177,10 @@ describe('portable ports', () => {
       updateProviderAccountReference: async () => {
         throw new Error('not implemented by fake');
       },
-      findWebhookVerificationCandidates: async () => [],
+      findWebhookVerificationCandidates: async () => ({
+        status: 'ok' as const,
+        candidates: [],
+      }),
     };
     const credentialStore: CredentialStore = {
       get: async () => undefined,

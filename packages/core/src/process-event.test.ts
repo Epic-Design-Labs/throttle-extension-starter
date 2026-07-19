@@ -49,7 +49,10 @@ function setup(
       getForJob: vi.fn(async () => current),
       upsert: vi.fn(),
       markUninstalled: vi.fn(),
-      findWebhookVerificationCandidates: vi.fn(async () => []),
+      findWebhookVerificationCandidates: vi.fn(async () => ({
+        status: 'ok' as const,
+        candidates: [],
+      })),
       updateProviderAccountReference: vi.fn(),
     },
     credentials: {
