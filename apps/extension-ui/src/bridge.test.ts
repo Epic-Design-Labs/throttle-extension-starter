@@ -47,28 +47,30 @@ describe('extension bridge composition', () => {
     expect(createBridge).not.toHaveBeenCalled();
   });
 
-  test('uses a visibly local non-production mock only when explicitly enabled', async () => {
-    const bridge = createExtensionBridge({
-      dashboardOrigin: 'https://dashboard.usethrottle.dev',
-      useMockBridge: true,
-      production: false,
-    });
+  test.each([undefined, 'not-a-dashboard-origin'])(
+    'uses a visibly local non-production mock without validating dashboard origin %j',
+    async (dashboardOrigin) => {
+      const bridge = createExtensionBridge({
+        ...(dashboardOrigin === undefined ? {} : { dashboardOrigin }),
+        useMockBridge: true,
+        production: false,
+      });
 
-    await expect(bridge.ready).resolves.toMatchObject({
-      workspace: { slug: 'local-workspace' },
-      environment: {
-        environmentKind: 'non_production',
-        providerEnvironment: 'sandbox',
-      },
-    });
-    expect(bridge.mode).toBe('local-mock');
-    expect(createBridge).not.toHaveBeenCalled();
-  });
+      await expect(bridge.ready).resolves.toMatchObject({
+        workspace: { slug: 'local-workspace' },
+        environment: {
+          environmentKind: 'non_production',
+          providerEnvironment: 'sandbox',
+        },
+      });
+      expect(bridge.mode).toBe('local-mock');
+      expect(createBridge).not.toHaveBeenCalled();
+    },
+  );
 
   test('refuses to enable the mock bridge in a production build', () => {
     expect(() =>
       createExtensionBridge({
-        dashboardOrigin: 'https://dashboard.usethrottle.dev',
         useMockBridge: true,
         production: true,
       }),

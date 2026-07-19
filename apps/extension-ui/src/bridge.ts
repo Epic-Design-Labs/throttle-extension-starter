@@ -24,13 +24,16 @@ export class InvalidBridgeConfigurationError extends Error {
 }
 
 export type BridgeOptions = {
-  dashboardOrigin: string;
+  dashboardOrigin?: string;
   useMockBridge: boolean;
   production: boolean;
 };
 
-function validateDashboardOrigin(value: string) {
+function validateDashboardOrigin(
+  value: string | undefined,
+): asserts value is string {
   try {
+    if (value === undefined) throw new InvalidBridgeConfigurationError();
     const parsed = new URL(value);
     if (parsed.protocol !== 'https:' || parsed.origin !== value)
       throw new InvalidBridgeConfigurationError();
@@ -74,11 +77,11 @@ export function createExtensionBridge(
     production: import.meta.env.PROD,
   },
 ): ExtensionBridge {
-  validateDashboardOrigin(options.dashboardOrigin);
   if (options.useMockBridge) {
     if (options.production) throw new InvalidBridgeConfigurationError();
     return localBridge();
   }
+  validateDashboardOrigin(options.dashboardOrigin);
   const bridge = createBridge({ targetOrigin: options.dashboardOrigin });
   return {
     mode: 'throttle',
