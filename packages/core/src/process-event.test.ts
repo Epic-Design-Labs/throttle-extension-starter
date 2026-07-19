@@ -152,6 +152,24 @@ describe('processConnectorEvent', () => {
     expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
     expect(f.activities).toHaveLength(0);
   });
+  test.each([1, 300])(
+    'retries a busy live lease after bounded delay %i without side effects',
+    async (retryAfterSeconds) => {
+      const f = setup();
+      (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: 'busy',
+        retryAfterSeconds,
+      });
+      expect(await processConnectorEvent(job, f.deps)).toEqual({
+        status: 'retry',
+        code: 'JOB_BUSY',
+        delaySeconds: retryAfterSeconds,
+      });
+      expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+      expect(f.activities).toHaveLength(0);
+      expect(f.deps.executions.finish).not.toHaveBeenCalled();
+    },
+  );
   test('uses the same provider idempotency key across attempts', async () => {
     const keys: string[] = [];
     const f = setup(

@@ -131,6 +131,12 @@ export async function processConnectorEvent(
     now: dependencies.clock.now(),
   });
   if (claim.status === 'duplicate') return { status: 'success' };
+  if (claim.status === 'busy')
+    return {
+      status: 'retry',
+      code: 'JOB_BUSY',
+      delaySeconds: claim.retryAfterSeconds,
+    };
   if (claim.status === 'unavailable')
     return { status: 'terminal', code: 'JOB_UNAVAILABLE' };
   const installation = await dependencies.installations.getForJob(

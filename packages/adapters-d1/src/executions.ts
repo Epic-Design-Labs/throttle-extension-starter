@@ -33,9 +33,26 @@ export class D1JobExecutionStore implements JobExecutionStore {
       .first<{ lease_token: string }>();
     if (row !== null) return { status: 'claimed', token: row.lease_token };
     const existing = await this.db
-      .prepare('SELECT status, attempt FROM jobs WHERE job_id=?')
+      .prepare(
+        'SELECT status, attempt, lease_expires_at FROM jobs WHERE job_id=?',
+      )
       .bind(input.jobId)
-      .first<{ status: string; attempt: number }>();
+      .first<{
+        status: string;
+        attempt: number;
+        lease_expires_at: string | null;
+      }>();
+    if (
+      existing?.status === 'processing' &&
+      input.attempt === existing.attempt &&
+      existing.lease_expires_at !== null
+    ) {
+      const remaining = Math.ceil(
+        (Date.parse(existing.lease_expires_at) - input.now.valueOf()) / 1000,
+      );
+      if (remaining > 0)
+        return { status: 'busy', retryAfterSeconds: Math.min(remaining, 300) };
+    }
     if (existing !== null && input.attempt <= existing.attempt)
       return { status: 'duplicate' };
     return { status: 'unavailable' };

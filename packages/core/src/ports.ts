@@ -62,6 +62,7 @@ export interface CredentialStore {
 
 export type JobClaimResult =
   | { status: 'claimed'; token: string }
+  | { status: 'busy'; retryAfterSeconds: number }
   | { status: 'duplicate' }
   | { status: 'unavailable' };
 export type JobFinishResult = 'finished' | 'cancelled' | 'stale';
@@ -69,6 +70,7 @@ export interface JobExecutionStore {
   /**
    * Pending/retry jobs claim only stored attempt + 1. An expired processing
    * lease reclaims only its stored attempt. Same/stale attempts are duplicate;
+   * a same-attempt live processing lease is busy with a bounded retry delay;
    * skipped/future attempts are unavailable. The claimed token is opaque and
    * must be passed only to finish; never log or expose it to providers.
    */

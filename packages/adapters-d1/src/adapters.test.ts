@@ -195,6 +195,24 @@ describe('D1 schema', () => {
     });
     expect(first.status).toBe('claimed');
     if (first.status !== 'claimed') throw new Error('expected claim');
+    expect(
+      await adapters.executions.claim({
+        jobId: 'fence-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toMatchObject({ status: 'busy', retryAfterSeconds: 300 });
+    await database
+      .prepare('UPDATE jobs SET lease_expires_at=? WHERE job_id=?')
+      .bind('2026-07-19T10:00:00.100Z', 'fence-job')
+      .run();
+    expect(
+      await adapters.executions.claim({
+        jobId: 'fence-job',
+        attempt: 1,
+        now: new Date(at),
+      }),
+    ).toMatchObject({ status: 'busy', retryAfterSeconds: 1 });
     await database
       .prepare('UPDATE jobs SET lease_expires_at=? WHERE job_id=?')
       .bind('2026-07-19T09:59:00.000Z', 'fence-job')
@@ -362,9 +380,13 @@ describe('D1 schema', () => {
       }),
     ]);
     expect(claims.map((claim) => claim.status).sort()).toEqual([
+      'busy',
       'claimed',
-      'duplicate',
     ]);
+    expect(claims.find((claim) => claim.status === 'busy')).toMatchObject({
+      status: 'busy',
+      retryAfterSeconds: 300,
+    });
     const claimed = claims.find((claim) => claim.status === 'claimed');
     if (claimed?.status !== 'claimed') throw new Error('expected claim');
     await adapters.executions.finish({
