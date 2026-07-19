@@ -16,6 +16,21 @@ const keyring = {
   }),
   resolve: (version: number) => credentialKeys.get(version),
 };
+const executionActivity = (
+  jobId: string,
+  installationId: string,
+  attempt: number,
+  result: 'success' | 'retryable_failure' = 'success',
+) => ({
+  activityId: `${jobId}:${attempt}`,
+  installationId,
+  jobId,
+  type: 'connector_sync' as const,
+  status: 'completed' as const,
+  result,
+  attempt,
+  createdAt: '2026-07-19T10:00:00.000Z',
+});
 
 const applyMigration = async (database: D1Database, migration: string) => {
   const statements: string[] = [];
@@ -198,6 +213,7 @@ describe('D1 schema', () => {
         attempt: 1,
         token: first.token,
         status: 'retry',
+        activity: executionActivity('fence-job', 'fence-installation', 1),
         now: new Date(at),
       }),
     ).toBe('stale');
@@ -207,6 +223,7 @@ describe('D1 schema', () => {
         attempt: 1,
         token: 'wrong-token',
         status: 'retry',
+        activity: executionActivity('fence-job', 'fence-installation', 1),
         now: new Date(at),
       }),
     ).toBe('stale');
@@ -215,10 +232,99 @@ describe('D1 schema', () => {
         jobId: 'fence-job',
         attempt: 1,
         token: second.token,
-        status: 'completed',
+        status: 'retry',
+        activity: executionActivity(
+          'fence-job',
+          'fence-installation',
+          1,
+          'retryable_failure',
+        ),
         now: new Date(at),
       }),
     ).toBe('finished');
+    expect(
+      await adapters.activities.list({
+        installationId: 'fence-installation',
+        limit: 10,
+      }),
+    ).toMatchObject([
+      { activityId: 'fence-job:1', result: 'retryable_failure' },
+    ]);
+  });
+  test('rolls back outcome activity when fenced job transition fails', async () => {
+    const adapters = createD1Adapters({ database, credentialKeys: keyring });
+    const scope = {
+      workspaceId: 'finish-rollback-workspace',
+      applicationId: 'finish-rollback-app',
+      environmentId: 'finish-rollback-env',
+    };
+    await adapters.installations.upsert({
+      installationId: 'finish-rollback-installation',
+      ...scope,
+      environmentKind: 'non_production',
+      extensionVersion: '1',
+      status: 'active',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+    });
+    const at = '2026-07-19T10:00:00.000Z';
+    await database
+      .prepare(
+        'INSERT INTO jobs (job_id,installation_id,payload_reference,attempt,status,scheduled_at,created_at,updated_at,lease_expires_at,lease_token) VALUES (?,?,?,0,?,?,?,?,NULL,NULL)',
+      )
+      .bind(
+        'finish-rollback-job',
+        'finish-rollback-installation',
+        'ref',
+        'pending',
+        at,
+        at,
+        at,
+      )
+      .run();
+    const claim = await adapters.executions.claim({
+      jobId: 'finish-rollback-job',
+      attempt: 1,
+      now: new Date(at),
+    });
+    if (claim.status !== 'claimed') throw new Error('expected claim');
+    await database
+      .prepare(
+        "CREATE TRIGGER fail_fenced_finish BEFORE UPDATE ON jobs WHEN OLD.job_id='finish-rollback-job' AND NEW.status='completed' BEGIN SELECT RAISE(ABORT,'forced finish failure'); END",
+      )
+      .run();
+    try {
+      await expect(
+        adapters.executions.finish({
+          jobId: 'finish-rollback-job',
+          attempt: 1,
+          token: claim.token,
+          status: 'completed',
+          activity: executionActivity(
+            'finish-rollback-job',
+            'finish-rollback-installation',
+            1,
+          ),
+          now: new Date(at),
+        }),
+      ).rejects.toThrow('forced finish failure');
+    } finally {
+      await database.prepare('DROP TRIGGER fail_fenced_finish').run();
+    }
+    expect(
+      await adapters.activities.list({
+        installationId: 'finish-rollback-installation',
+        limit: 10,
+      }),
+    ).toHaveLength(0);
+    expect(
+      (
+        await database
+          .prepare('SELECT status FROM jobs WHERE job_id=?')
+          .bind('finish-rollback-job')
+          .first<{ status: string }>()
+      )?.status,
+    ).toBe('processing');
   });
   test('atomically claims one concurrent execution and completes it', async () => {
     const adapters = createD1Adapters({ database, credentialKeys: keyring });
@@ -266,6 +372,7 @@ describe('D1 schema', () => {
       attempt: 1,
       token: claimed.token,
       status: 'completed',
+      activity: executionActivity('claim-job', 'claim-installation', 1),
       now: new Date(at),
     });
     expect(
@@ -320,6 +427,12 @@ describe('D1 schema', () => {
       attempt: 1,
       token: progressClaim.token,
       status: 'retry',
+      activity: executionActivity(
+        'progress-job',
+        'progress-installation',
+        1,
+        'retryable_failure',
+      ),
       now: new Date(at),
     });
     expect(
@@ -472,9 +585,21 @@ describe('D1 schema', () => {
         attempt: 1,
         token: uninstallClaim.token,
         status: 'retry',
+        activity: executionActivity(
+          'race-uninstall-job',
+          'race-uninstall-installation',
+          1,
+          'retryable_failure',
+        ),
         now: new Date('2026-07-19T10:02:00.000Z'),
       }),
     ).toBe('cancelled');
+    expect(
+      await adapters.activities.list({
+        installationId: 'race-uninstall-installation',
+        limit: 10,
+      }),
+    ).toHaveLength(0);
     expect(
       await adapters.executions.claim({
         jobId: 'race-uninstall-job',

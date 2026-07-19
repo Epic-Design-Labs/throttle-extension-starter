@@ -82,6 +82,8 @@ export interface JobExecutionStore {
     attempt: number;
     token: string;
     status: 'completed' | 'retry' | 'failed';
+    /** Sanitized outcome persisted atomically with the fenced state change. */
+    activity: Activity;
     now: Date;
   }): Promise<JobFinishResult>;
 }

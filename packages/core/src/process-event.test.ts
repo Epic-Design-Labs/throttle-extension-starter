@@ -74,7 +74,15 @@ function setup(
         status: 'claimed' as const,
         token: 'claim-token',
       })),
-      finish: vi.fn(async () => 'finished' as const),
+      finish: vi.fn(async (input) => {
+        if (
+          !activities.some(
+            (item) => item.activityId === input.activity.activityId,
+          )
+        )
+          activities.push(input.activity);
+        return 'finished' as const;
+      }),
     },
     connector: { validateCredentials: vi.fn(), handleEvent },
     clock: { now: () => new Date('2026-07-19T01:00:00.000Z') },
@@ -104,6 +112,10 @@ describe('processConnectorEvent', () => {
         attempt: 1,
         status: 'completed',
         token: 'claim-token',
+        activity: expect.objectContaining({
+          activityId: 'j:1',
+          result: 'success',
+        }),
       }),
     );
     expect(
@@ -176,21 +188,19 @@ describe('processConnectorEvent', () => {
       expect.objectContaining({ status: 'retry' }),
     );
   });
-  test('redelivery after activity persistence failure reuses the stable provider key', async () => {
+  test('redelivery after atomic finish failure reuses the stable provider key', async () => {
     const keys: string[] = [];
     const f = setup(
       vi.fn(async (input) => {
         keys.push(input.idempotencyKey);
       }),
     );
-    (f.deps.activities.append as ReturnType<typeof vi.fn>)
+    (f.deps.executions.finish as ReturnType<typeof vi.fn>)
       .mockRejectedValueOnce(new Error('activity unavailable'))
-      .mockResolvedValue(undefined);
-    expect(await processConnectorEvent(job, f.deps)).toEqual({
-      status: 'retry',
-      delaySeconds: 5,
-      code: 'INFRASTRUCTURE_ERROR',
-    });
+      .mockResolvedValue('finished');
+    await expect(processConnectorEvent(job, f.deps)).rejects.toThrow(
+      'activity unavailable',
+    );
     expect(await processConnectorEvent(job, f.deps)).toEqual({
       status: 'success',
     });

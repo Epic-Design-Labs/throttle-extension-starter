@@ -84,40 +84,6 @@ async function finish(
       : result.status === 'retry'
         ? 'retryable_failure'
         : 'terminal_failure';
-  try {
-    await dependencies.activities.append(
-      makeActivity(
-        job,
-        dependencies.clock.now(),
-        activityResult,
-        result.status === 'success' ? undefined : result.code,
-      ),
-    );
-  } catch {
-    const recoverable = job.attempt < MAX_JOB_ATTEMPTS;
-    const execution = await dependencies.executions.finish({
-      jobId: job.jobId,
-      attempt: job.attempt,
-      token,
-      status: recoverable ? 'retry' : 'failed',
-      now: dependencies.clock.now(),
-    });
-    if (execution === 'cancelled')
-      return { status: 'terminal', code: 'JOB_CANCELLED' };
-    dependencies.logger.warn('Connector activity persistence failed', {
-      installationId: job.installationId,
-      jobId: job.jobId,
-      attempt: job.attempt,
-      code: 'INFRASTRUCTURE_ERROR',
-    });
-    return recoverable
-      ? {
-          status: 'retry',
-          delaySeconds: retryDelaySeconds(job.attempt),
-          code: 'INFRASTRUCTURE_ERROR',
-        }
-      : { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' };
-  }
   const execution = await dependencies.executions.finish({
     jobId: job.jobId,
     attempt: job.attempt,
@@ -128,6 +94,12 @@ async function finish(
         : result.status === 'retry'
           ? 'retry'
           : 'failed',
+    activity: makeActivity(
+      job,
+      dependencies.clock.now(),
+      activityResult,
+      result.status === 'success' ? undefined : result.code,
+    ),
     now: dependencies.clock.now(),
   });
   if (execution === 'cancelled')
