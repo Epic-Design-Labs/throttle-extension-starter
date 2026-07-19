@@ -181,7 +181,7 @@ describe('portable ports', () => {
       delete: async () => undefined,
     };
     const deliveryStore: DeliveryStore = {
-      accept: async () => true,
+      accept: async () => ({ accepted: true }),
     };
     const jobQueue: JobQueue = { enqueue: async () => undefined };
     const activityStore: ActivityStore = {

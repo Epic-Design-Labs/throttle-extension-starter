@@ -5,6 +5,11 @@ import {
   parseWebhookRoutingHint,
 } from './events.js';
 
+it('package root does not expose internal bounded JSON parser types', async () => {
+  const root: Record<string, unknown> = await import('./index.js');
+  expect(root).not.toHaveProperty('parseBoundedWebhookJson');
+});
+
 it('extracts only explicitly untrusted routing identifiers', () => {
   expect(
     parseWebhookRoutingHint(

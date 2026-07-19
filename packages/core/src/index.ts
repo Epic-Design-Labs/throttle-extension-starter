@@ -19,12 +19,14 @@ export type {
   ActivityStore,
   Clock,
   CredentialStore,
+  CredentialKind,
   DeliveryStore,
   InstallationStore,
   JobQueue,
   LogFields,
   Logger,
 } from './ports.js';
+export { MAX_WEBHOOK_VERIFICATION_CANDIDATES } from './ports.js';
 export {
   classifyProviderFailure,
   MAX_JOB_ATTEMPTS,

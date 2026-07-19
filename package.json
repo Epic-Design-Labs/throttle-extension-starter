@@ -14,7 +14,9 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "setup": "node scripts/setup.mjs",
-    "test": "vitest run",
+    "test": "pnpm run test:packages && pnpm run test:root",
+    "test:packages": "pnpm --filter @starter/adapters-d1 test && pnpm --filter @starter/contracts test && pnpm --filter @starter/security test && pnpm --filter @starter/core test && pnpm --filter @starter/throttle test",
+    "test:root": "vitest run --config vitest.root.config.ts",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

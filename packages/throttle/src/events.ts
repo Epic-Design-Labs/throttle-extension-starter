@@ -53,12 +53,7 @@ export function parseWebhookRoutingHint(
   if (bounded === null) return null;
   try {
     const parsed = bounded.value;
-    if (
-      !hasSafeDepth(parsed) ||
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      Array.isArray(parsed)
-    )
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
       return null;
     const value = parsed as Record<string, unknown>;
     if (

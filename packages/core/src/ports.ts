@@ -1,5 +1,7 @@
 import type { Activity, ConnectorJob, Installation } from '@starter/contracts';
 
+export const MAX_WEBHOOK_VERIFICATION_CANDIDATES = 100;
+
 export interface InstallationStore {
   get(installationId: string): Promise<Installation | undefined>;
   upsert(installation: Installation): Promise<Installation>;
@@ -16,17 +18,28 @@ export interface InstallationStore {
 }
 
 export interface CredentialStore {
-  get(installationId: string): Promise<Uint8Array | undefined>;
-  set(installationId: string, credentials: Uint8Array): Promise<void>;
-  delete(installationId: string): Promise<void>;
+  get(
+    installationId: string,
+    kind: CredentialKind,
+  ): Promise<Uint8Array | undefined>;
+  set(
+    installationId: string,
+    kind: CredentialKind,
+    credentials: Uint8Array,
+  ): Promise<void>;
+  delete(installationId: string, kind?: CredentialKind): Promise<void>;
 }
+
+export type CredentialKind =
+  'throttleApiKey' | 'webhookSigningSecret' | 'providerCredentials';
 
 export interface DeliveryStore {
   accept(input: {
     installationId: string;
     eventId: string;
+    eventType: string;
     acceptedAt: Date;
-  }): Promise<boolean>;
+  }): Promise<{ accepted: boolean }>;
 }
 
 export interface JobQueue {

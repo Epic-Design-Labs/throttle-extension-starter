@@ -1,0 +1,33 @@
+{
+  "name": "@starter/adapters-d1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "vitest run",
+    "test:consumer": "node --input-type=module -e \"const d1 = await import('@starter/adapters-d1'); if (!d1.createD1Adapters) throw new Error('package root did not export adapters')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@starter/contracts": "workspace:*",
+    "@starter/core": "workspace:*",
+    "@starter/security": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20250617.0",
+    "@types/node": "^24.0.0",
+    "miniflare": "4.20250617.0"
+  }
+}
