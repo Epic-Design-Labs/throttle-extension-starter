@@ -28,6 +28,14 @@ describe('structured redaction', () => {
     'privateKey',
     'cookie',
     'set-cookie',
+    'signature',
+    'webhookSignature',
+    'X-Throttle-Signature',
+    'x_throttle_signature',
+    'clientSecret',
+    'api-token',
+    'idToken',
+    'x-api-key',
   ])(
     'redacts credential field %s case-insensitively after normalization',
     (field) => {
@@ -44,6 +52,18 @@ describe('structured redaction', () => {
     };
     expect(redact(safe)).toEqual(safe);
   });
+
+  it.each(['ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf'] as const)(
+    'contains hostile proxy %s trap failures without exposing messages',
+    (trap) => {
+      const handler: ProxyHandler<Record<string, unknown>> = {
+        [trap]: () => {
+          throw new Error(`hostile ${trap} secret`);
+        },
+      };
+      expect(redact(new Proxy({ safe: 1 }, handler))).toBe('[Unserializable]');
+    },
+  );
 
   it('returns an immutable safe clone while preserving arrays and scalar values', () => {
     const input = { list: [{ password: 'x' }, null, true, 2, 'safe'] };
@@ -103,6 +123,23 @@ describe('structured redaction', () => {
     expect(result[0]).toBe('[Getter]');
     expect(Object.hasOwn(result, 1)).toBe(false);
     expect(result[2]).toBe('safe');
+  });
+
+  it('rejects excessive proxied array lengths without allocating the clone', () => {
+    const input = new Proxy(new Array(10_001), {});
+    expect(redact(input)).toBe('[Unserializable]');
+  });
+
+  it('contains malformed proxied array length descriptors', () => {
+    const input = new Proxy([], {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === 'length') {
+          return { configurable: true, enumerable: false, value: -1 };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    expect(redact(input)).toBe('[Unserializable]');
   });
 
   it('redacts sensitive named array properties without invoking accessors', () => {

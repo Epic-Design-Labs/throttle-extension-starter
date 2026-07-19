@@ -72,6 +72,19 @@ describe('secret encryption', () => {
     ).rejects.toThrow('Unable to decrypt secret');
   });
 
+  it('authenticates the canonical key version in additional data', async () => {
+    const key = validKey();
+    const encrypted = await encryptSecret(
+      encoder.encode('secret'),
+      key,
+      'inst_1',
+      7,
+    );
+    await expect(
+      decryptSecret({ ...encrypted, keyVersion: 8 }, key, 'inst_1'),
+    ).rejects.toThrow('Unable to decrypt secret');
+  });
+
   it.each([
     { algorithm: 'AES-GCM' },
     { keyVersion: 0 },

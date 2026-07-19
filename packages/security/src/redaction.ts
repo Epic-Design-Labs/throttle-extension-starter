@@ -1,4 +1,6 @@
 const REDACTED = '[REDACTED]';
+const UNSERIALIZABLE = '[Unserializable]';
+const MAX_STRUCTURED_LOG_ARRAY_LENGTH = 10_000;
 
 const SENSITIVE_KEYS = new Set([
   'authorization',
@@ -16,6 +18,13 @@ const SENSITIVE_KEYS = new Set([
   'privatekey',
   'cookie',
   'setcookie',
+  'signature',
+  'webhooksignature',
+  'xthrottlesignature',
+  'clientsecret',
+  'apitoken',
+  'idtoken',
+  'xapikey',
 ]);
 
 const isSensitiveKey = (key: string): boolean =>
@@ -69,6 +78,14 @@ const cloneForLogging = (
       lengthDescriptor && 'value' in lengthDescriptor
         ? (lengthDescriptor.value as number)
         : 0;
+    if (
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > MAX_STRUCTURED_LOG_ARRAY_LENGTH
+    ) {
+      ancestors.delete(value);
+      return UNSERIALIZABLE;
+    }
     const result = new Array<unknown>(length);
     for (const [key, descriptor] of Object.entries(descriptors)) {
       if (key === 'length' || !descriptor.enumerable) continue;
@@ -114,5 +131,9 @@ const cloneForLogging = (
 
 /** Creates a getter-free, JSON-friendly clone suitable for structured logs. */
 export function redact<T>(value: T): unknown {
-  return cloneForLogging(value, new WeakSet());
+  try {
+    return cloneForLogging(value, new WeakSet());
+  } catch {
+    return UNSERIALIZABLE;
+  }
 }

@@ -9,6 +9,7 @@ const ALGORITHM = 'A256GCM' as const;
 const IV_LENGTH = 12;
 const ROOT_KEY_LENGTH = 32;
 const DECRYPTION_ERROR = 'Unable to decrypt secret';
+const AAD_DOMAIN = 'throttle-security:aes-256-gcm:v1';
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;
 const ENVELOPE_FIELDS = [
   'algorithm',
@@ -76,11 +77,18 @@ const validatePlaintext = (plaintext: Uint8Array): Uint8Array<ArrayBuffer> => {
   return copyBytes(plaintext);
 };
 
-const validateContext = (installationId: string): Uint8Array<ArrayBuffer> => {
+const encodeAdditionalData = (
+  installationId: string,
+  keyVersion: number,
+): Uint8Array<ArrayBuffer> => {
   if (typeof installationId !== 'string' || installationId.length === 0) {
     throw new Error('A non-empty installation context is required');
   }
-  return new TextEncoder().encode(installationId);
+  // Canonical JSON array gives the AAD an unambiguous field order and type
+  // boundary. The versioned domain separates this ciphertext from other uses.
+  return new TextEncoder().encode(
+    JSON.stringify([AAD_DOMAIN, installationId, keyVersion]),
+  );
 };
 
 const validateKeyVersion = (keyVersion: number): void => {
@@ -98,6 +106,7 @@ const importKey = (rootKey: Uint8Array<ArrayBuffer>): Promise<CryptoKey> =>
 /**
  * Encrypts caller-owned bytes without mutating them. The returned envelope owns
  * its encoded data; callers likewise own and may clear their input when desired.
+ * Byte inputs must be same-realm Uint8Array instances.
  */
 export async function encryptSecret(
   plaintext: Uint8Array,
@@ -107,7 +116,7 @@ export async function encryptSecret(
 ): Promise<EncryptedSecret> {
   validateKeyVersion(keyVersion);
   const keyBytes = validateRootKey(rootKey);
-  const additionalData = validateContext(installationId);
+  const additionalData = encodeAdditionalData(installationId, keyVersion);
   const plaintextBytes = validatePlaintext(plaintext);
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const key = await importKey(keyBytes);
@@ -124,7 +133,10 @@ export async function encryptSecret(
   };
 }
 
-/** Returns newly allocated caller-owned plaintext bytes. */
+/**
+ * Returns newly allocated caller-owned plaintext bytes. Root keys must be
+ * same-realm Uint8Array instances.
+ */
 export async function decryptSecret(
   envelope: unknown,
   rootKey: Uint8Array,
@@ -172,7 +184,14 @@ export async function decryptSecret(
     }
     const key = await importKey(validateRootKey(rootKey));
     const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv, additionalData: validateContext(installationId) },
+      {
+        name: 'AES-GCM',
+        iv,
+        additionalData: encodeAdditionalData(
+          installationId,
+          value.keyVersion as number,
+        ),
+      },
       key,
       ciphertext,
     );
