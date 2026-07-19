@@ -142,6 +142,20 @@ describe('structured redaction', () => {
     expect(redact(input)).toBe('[Unserializable]');
   });
 
+  it('rejects proxied array indexes outside the validated source length', () => {
+    const input = new Proxy([], {
+      ownKeys: () => ['length', '4294967294'],
+      getOwnPropertyDescriptor(target, key) {
+        if (key === '4294967294') {
+          return { configurable: true, enumerable: true, value: 'exotic' };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    expect(redact(input)).toBe('[Unserializable]');
+  });
+
   it('redacts sensitive named array properties without invoking accessors', () => {
     let calls = 0;
     const input: unknown[] = [];

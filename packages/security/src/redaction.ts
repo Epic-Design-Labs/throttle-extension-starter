@@ -1,6 +1,7 @@
 const REDACTED = '[REDACTED]';
 const UNSERIALIZABLE = '[Unserializable]';
-const MAX_STRUCTURED_LOG_ARRAY_LENGTH = 10_000;
+const MAX_REDACTED_ARRAY_LENGTH = 10_000;
+const MAX_ARRAY_INDEX = 4_294_967_294;
 
 const SENSITIVE_KEYS = new Set([
   'authorization',
@@ -29,6 +30,16 @@ const SENSITIVE_KEYS = new Set([
 
 const isSensitiveKey = (key: string): boolean =>
   SENSITIVE_KEYS.has(key.toLowerCase().replace(/[-_\s]/gu, ''));
+
+const canonicalArrayIndex = (key: string): number | undefined => {
+  const index = Number(key);
+  return Number.isInteger(index) &&
+    index >= 0 &&
+    index <= MAX_ARRAY_INDEX &&
+    String(index) === key
+    ? index
+    : undefined;
+};
 
 const errorName = (error: Error): string => {
   const descriptor = Object.getOwnPropertyDescriptor(error, 'name');
@@ -81,7 +92,7 @@ const cloneForLogging = (
     if (
       !Number.isSafeInteger(length) ||
       length < 0 ||
-      length > MAX_STRUCTURED_LOG_ARRAY_LENGTH
+      length > MAX_REDACTED_ARRAY_LENGTH
     ) {
       ancestors.delete(value);
       return UNSERIALIZABLE;
@@ -89,6 +100,14 @@ const cloneForLogging = (
     const result = new Array<unknown>(length);
     for (const [key, descriptor] of Object.entries(descriptors)) {
       if (key === 'length' || !descriptor.enumerable) continue;
+      const index = canonicalArrayIndex(key);
+      if (
+        index !== undefined &&
+        (index >= length || index >= MAX_REDACTED_ARRAY_LENGTH)
+      ) {
+        ancestors.delete(value);
+        return UNSERIALIZABLE;
+      }
       const sanitized = isSensitiveKey(key)
         ? REDACTED
         : 'value' in descriptor
