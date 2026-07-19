@@ -62,17 +62,21 @@ function fixture(options?: {
     ready: options?.ready ?? Promise.resolve(session),
     mode: options?.mode ?? 'throttle',
     getToken: vi.fn(() => 'token'),
+    refreshToken: vi.fn(async () => 'token'),
     resize: vi.fn(),
     toast: vi.fn(),
     destroy: vi.fn(),
   };
   const client: BackendClient = {
     getInstallation: vi.fn(async () => installation('not_configured')),
-    bootstrapSecrets: vi.fn(async () => ({ status: 'active' })),
+    bootstrapSecrets: vi.fn(async () => ({ status: 'active' as const })),
     getConnector: vi.fn(async () => connector('not_connected')),
-    connectProvider: vi.fn(async () => ({ status: 'connected' })),
+    connectProvider: vi.fn(async () => ({
+      status: 'connected' as const,
+      installationId: 'installation-local',
+    })),
     getConfiguration: vi.fn(async () => ({ configuration: null })),
-    saveConfiguration: vi.fn(async () => ({ status: 'updated' })),
+    saveConfiguration: vi.fn(async () => ({ status: 'updated' as const })),
     getActivity: vi.fn(async () => ({ activities: [] })),
     ...options?.client,
   };
@@ -84,7 +88,10 @@ function fixture(options?: {
   return { bridge, bridgeFactory, client, backendFactory, ...view };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('embedded connector management UI', () => {
   test('shows bridge loading and owns exactly one bridge lifecycle', async () => {
@@ -158,11 +165,14 @@ describe('embedded connector management UI', () => {
     );
 
     await waitFor(() =>
-      expect(client.bootstrapSecrets).toHaveBeenCalledWith({
-        throttleApiKey: apiSecret,
-        webhookSigningSecret: signingSecret,
-        replace: false,
-      }),
+      expect(client.bootstrapSecrets).toHaveBeenCalledWith(
+        {
+          throttleApiKey: apiSecret,
+          webhookSigningSecret: signingSecret,
+          replace: false,
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
     await screen.findByRole('heading', { name: 'Connect your provider' });
     expect(document.body).not.toHaveTextContent(apiSecret);
@@ -195,7 +205,9 @@ describe('embedded connector management UI', () => {
     await user.click(screen.getByRole('button', { name: 'Connect provider' }));
 
     await waitFor(() =>
-      expect(client.connectProvider).toHaveBeenCalledWith(credential),
+      expect(client.connectProvider).toHaveBeenCalledWith(credential, {
+        signal: expect.any(AbortSignal),
+      }),
     );
     await screen.findByRole('heading', { name: 'Connector status' });
     expect(screen.getByText('Connected')).toBeVisible();
@@ -207,6 +219,12 @@ describe('embedded connector management UI', () => {
 
   test('resizes for action errors and does not toast failed actions', async () => {
     const user = userEvent.setup();
+    let height = 320;
+    vi.spyOn(
+      document.documentElement,
+      'scrollHeight',
+      'get',
+    ).mockImplementation(() => height);
     const { bridge } = fixture({
       client: {
         getInstallation: vi.fn(async () => installation('active')),
@@ -226,6 +244,7 @@ describe('embedded connector management UI', () => {
       screen.getByLabelText('Provider credential'),
       'rejected-secret',
     );
+    height = 480;
     await user.click(screen.getByRole('button', { name: 'Connect provider' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -234,6 +253,50 @@ describe('embedded connector management UI', () => {
     expect(bridge.toast).not.toHaveBeenCalled();
     expect(bridge.resize).toHaveBeenCalledTimes(resizeCount + 1);
     expect(document.body).not.toHaveTextContent('rejected-secret');
+  });
+
+  test('observes, debounces, deduplicates, and cleans meaningful resizes', async () => {
+    let callback!: ResizeObserverCallback;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    class FakeResizeObserver {
+      constructor(next: ResizeObserverCallback) {
+        callback = next;
+      }
+      observe = observe;
+      disconnect = disconnect;
+      unobserve = vi.fn();
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    let height = 400;
+    vi.spyOn(
+      document.documentElement,
+      'scrollHeight',
+      'get',
+    ).mockImplementation(() => height);
+    const { bridge, unmount } = fixture();
+    await screen.findByRole('heading', { name: 'Secure installation setup' });
+    await waitFor(() =>
+      expect(observe).toHaveBeenCalledWith(document.documentElement),
+    );
+    await waitFor(() => expect(bridge.resize).toHaveBeenCalledWith(400));
+    vi.mocked(bridge.resize).mockClear();
+
+    height = 640;
+    callback([], {} as ResizeObserver);
+    callback([], {} as ResizeObserver);
+    await waitFor(() => expect(bridge.resize).toHaveBeenCalledTimes(1));
+    expect(bridge.resize).toHaveBeenCalledWith(640);
+    callback([], {} as ResizeObserver);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(bridge.resize).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+    height = 800;
+    callback([], {} as ResizeObserver);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(bridge.resize).toHaveBeenCalledTimes(1);
   });
 
   test('shows connected configuration, environment, and sanitized recent activity', async () => {
@@ -351,11 +414,14 @@ describe('embedded connector management UI', () => {
     await user.click(submit);
 
     await waitFor(() =>
-      expect(client.bootstrapSecrets).toHaveBeenCalledWith({
-        throttleApiKey: 'new-api-secret',
-        webhookSigningSecret: 'new-signing-secret',
-        replace: true,
-      }),
+      expect(client.bootstrapSecrets).toHaveBeenCalledWith(
+        {
+          throttleApiKey: 'new-api-secret',
+          webhookSigningSecret: 'new-signing-secret',
+          replace: true,
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
     expect(
       screen.queryByLabelText('Replacement Throttle API key'),
@@ -390,6 +456,145 @@ describe('embedded connector management UI', () => {
     expect(getInstallation).toHaveBeenCalledTimes(2);
   });
 
+  test('aborts an in-flight load on unmount and ignores its continuation', async () => {
+    const pending = deferred<InstallationResponse>();
+    const getInstallation = vi.fn(
+      (_options?: { signal?: AbortSignal }) => pending.promise,
+    );
+    const { bridge, unmount } = fixture({ client: { getInstallation } });
+    await waitFor(() => expect(getInstallation).toHaveBeenCalledOnce());
+    const signal = getInstallation.mock.calls[0]![0]?.signal;
+
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    pending.resolve(installation('not_configured'));
+    await Promise.resolve();
+    expect(bridge.toast).not.toHaveBeenCalled();
+  });
+
+  test('keeps a newer load when an older generation resolves later', async () => {
+    const staleInstallation = deferred<InstallationResponse>();
+    const first = fixture({
+      client: {
+        getInstallation: vi.fn(() => staleInstallation.promise),
+      },
+    });
+    await waitFor(() =>
+      expect(first.client.getInstallation).toHaveBeenCalledOnce(),
+    );
+    const nextBridge: ExtensionBridge = {
+      ...first.bridge,
+      ready: Promise.resolve(session),
+      destroy: vi.fn(),
+    };
+    const nextClient: BackendClient = {
+      ...first.client,
+      getInstallation: vi.fn(async () => installation('not_configured')),
+    };
+    const nextBridgeFactory = () => nextBridge;
+    const nextBackendFactory = () => nextClient;
+    first.rerender(
+      <App
+        bridgeFactory={nextBridgeFactory}
+        backendFactory={nextBackendFactory}
+      />,
+    );
+    await screen.findByRole('heading', { name: 'Secure installation setup' });
+
+    staleInstallation.resolve(installation('active'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(first.client.getConnector).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('heading', { name: 'Secure installation setup' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Connect your provider' }),
+    ).not.toBeInTheDocument();
+  });
+
+  test('aborts an in-flight action on unmount without a stale toast', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{
+      status: 'connected';
+      installationId: string;
+    }>();
+    const connectProvider = vi.fn(
+      (_credential: string, _options?: { signal?: AbortSignal }) =>
+        pending.promise,
+    );
+    const { bridge, unmount } = fixture({
+      client: {
+        getInstallation: vi.fn(async () => installation('active')),
+        connectProvider,
+      },
+    });
+    await screen.findByRole('heading', { name: 'Connect your provider' });
+    await user.type(screen.getByLabelText('Provider credential'), 'credential');
+    await user.click(screen.getByRole('button', { name: 'Connect provider' }));
+    await waitFor(() => expect(connectProvider).toHaveBeenCalledOnce());
+    const signal = connectProvider.mock.calls[0]![1]?.signal;
+
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    pending.resolve({
+      status: 'connected',
+      installationId: 'installation-local',
+    });
+    await Promise.resolve();
+    expect(bridge.toast).not.toHaveBeenCalled();
+  });
+
+  test('fences an older overlapping action from state and toast', async () => {
+    const first = deferred<{
+      status: 'connected';
+      installationId: string;
+    }>();
+    const second = deferred<{
+      status: 'connected';
+      installationId: string;
+    }>();
+    const connectProvider = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const getConnector = vi
+      .fn()
+      .mockResolvedValueOnce(connector('not_connected'))
+      .mockResolvedValue(connector('connected'));
+    const { bridge } = fixture({
+      client: {
+        getInstallation: vi.fn(async () => installation('active')),
+        getConnector,
+        connectProvider,
+      },
+    });
+    await screen.findByRole('heading', { name: 'Connect your provider' });
+    const input = screen.getByLabelText('Provider credential');
+    const form = input.closest('form');
+    if (!form) throw new Error('Expected provider form');
+    fireEvent.change(input, { target: { value: 'first-secret' } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(connectProvider).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { value: 'second-secret' } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(connectProvider).toHaveBeenCalledTimes(2));
+    expect(connectProvider.mock.calls[0]![1].signal.aborted).toBe(true);
+
+    second.resolve({
+      status: 'connected',
+      installationId: 'installation-local',
+    });
+    await screen.findByRole('heading', { name: 'Connector status' });
+    expect(bridge.toast).toHaveBeenCalledTimes(1);
+    first.resolve({
+      status: 'connected',
+      installationId: 'installation-local',
+    });
+    await Promise.resolve();
+    expect(bridge.toast).toHaveBeenCalledTimes(1);
+  });
+
   test('announces completed configuration saves but not failed actions', async () => {
     const user = userEvent.setup();
     const { bridge, client } = fixture({
@@ -406,9 +611,10 @@ describe('embedded connector management UI', () => {
     );
 
     await waitFor(() =>
-      expect(client.saveConfiguration).toHaveBeenCalledWith({
-        syncMode: 'manual',
-      }),
+      expect(client.saveConfiguration).toHaveBeenCalledWith(
+        { syncMode: 'manual' },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
     expect(bridge.toast).toHaveBeenCalledWith(
       'Configuration saved.',

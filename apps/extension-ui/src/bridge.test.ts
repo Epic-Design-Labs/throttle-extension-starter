@@ -9,6 +9,7 @@ vi.mock('@usethrottle/extension-bridge', () => ({
   createBridge: vi.fn(() => ({
     ready: Promise.resolve({}),
     getToken: vi.fn(() => 'token'),
+    refreshToken: vi.fn(async () => 'token'),
     resize: vi.fn(),
     toast: vi.fn(),
     destroy: vi.fn(),

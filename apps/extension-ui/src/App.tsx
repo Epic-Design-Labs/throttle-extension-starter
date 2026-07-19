@@ -34,7 +34,9 @@ export interface AppProps {
 const defaultBackendFactory = (bridge: ExtensionBridge) =>
   createBackendClient({
     baseUrl: import.meta.env.VITE_CONNECTOR_API_ORIGIN,
+    mode: bridge.mode,
     getToken: () => bridge.getToken(),
+    refreshToken: () => bridge.refreshToken(),
   });
 
 function publicError(error: unknown) {
@@ -122,15 +124,45 @@ export function App({
 }: AppProps) {
   const bridgeRef = useRef<ExtensionBridge | undefined>(undefined);
   const clientRef = useRef<BackendClient | undefined>(undefined);
+  const mountedRef = useRef(false);
+  const operationRef = useRef<
+    { generation: number; controller: AbortController } | undefined
+  >(undefined);
+  const generationRef = useRef(0);
+  const scheduleResizeRef = useRef<() => void>(() => undefined);
   const [session, setSession] = useState<BridgeSessionContext>();
   const [view, setView] = useState<ViewState>({ kind: 'loading' });
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [rotationOpen, setRotationOpen] = useState(false);
 
-  const load = async (client: BackendClient) => {
+  const beginOperation = () => {
+    operationRef.current?.controller.abort();
+    const operation = {
+      generation: ++generationRef.current,
+      controller: new AbortController(),
+    };
+    operationRef.current = operation;
+    return operation;
+  };
+
+  const isCurrent = (operation: {
+    generation: number;
+    controller: AbortController;
+  }) =>
+    mountedRef.current &&
+    operationRef.current?.generation === operation.generation &&
+    !operation.controller.signal.aborted;
+
+  const load = async (
+    client: BackendClient,
+    operation: { generation: number; controller: AbortController },
+  ) => {
+    if (!isCurrent(operation)) return;
     setActionError(undefined);
-    const installation = await client.getInstallation();
+    const requestOptions = { signal: operation.controller.signal };
+    const installation = await client.getInstallation(requestOptions);
+    if (!isCurrent(operation)) return;
     if (installation.status === 'not_configured') {
       setView({ kind: 'bootstrap' });
       return;
@@ -143,15 +175,17 @@ export function App({
       });
       return;
     }
-    const connector = await client.getConnector();
+    const connector = await client.getConnector(requestOptions);
+    if (!isCurrent(operation)) return;
     if (connector.status === 'not_connected') {
       setView({ kind: 'disconnected' });
       return;
     }
     const [configuration, activity] = await Promise.all([
-      client.getConfiguration(),
-      client.getActivity(),
+      client.getConfiguration(requestOptions),
+      client.getActivity(requestOptions),
     ]);
+    if (!isCurrent(operation)) return;
     setView({
       kind: 'connected',
       configuration: configuration.configuration,
@@ -160,6 +194,7 @@ export function App({
   };
 
   useEffect(() => {
+    mountedRef.current = true;
     let active = true;
     let bridge: ExtensionBridge | undefined;
     let client: BackendClient;
@@ -173,19 +208,25 @@ export function App({
     }
     bridgeRef.current = bridge;
     clientRef.current = client;
+    const operation = beginOperation();
+    setView({ kind: 'loading' });
     void bridge.ready
       .then(async (context) => {
-        if (!active) return;
+        if (!active || !isCurrent(operation)) return;
         setSession(context);
-        await load(client);
+        await load(client, operation);
       })
       .catch((error: unknown) => {
-        if (!active) return;
+        if (!active || !isCurrent(operation)) return;
         const safe = publicError(error);
         setView({ kind: 'error', ...safe });
       });
     return () => {
       active = false;
+      mountedRef.current = false;
+      operationRef.current?.controller.abort();
+      operationRef.current = undefined;
+      generationRef.current++;
       bridge.destroy();
       bridgeRef.current = undefined;
       clientRef.current = undefined;
@@ -193,23 +234,54 @@ export function App({
   }, [backendFactory, bridgeFactory]);
 
   useEffect(() => {
-    const bridge = bridgeRef.current;
-    if (!bridge) return;
-    const height = Math.max(
-      document.documentElement.scrollHeight,
-      document.body.scrollHeight,
-      320,
-    );
-    bridge.resize(height);
+    if (!session) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastHeight: number | undefined;
+    const schedule = () => {
+      if (stopped) return;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (stopped) return;
+        const height = Math.max(
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight,
+          320,
+        );
+        if (height === lastHeight) return;
+        lastHeight = height;
+        bridgeRef.current?.resize(height);
+      }, 0);
+    };
+    scheduleResizeRef.current = schedule;
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? undefined
+        : new ResizeObserver(schedule);
+    observer?.observe(document.documentElement);
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      observer?.disconnect();
+      scheduleResizeRef.current = () => undefined;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    scheduleResizeRef.current();
   }, [actionError, rotationOpen, view]);
 
   const reload = async () => {
     const client = clientRef.current;
     if (!client) return;
+    const operation = beginOperation();
     setView({ kind: 'loading' });
     try {
-      await load(client);
+      await load(client, operation);
     } catch (error) {
+      if (!isCurrent(operation)) return;
       setView({ kind: 'error', ...publicError(error) });
     }
   };
@@ -217,59 +289,74 @@ export function App({
   const submitSecrets = async (form: HTMLFormElement, replace: boolean) => {
     const client = clientRef.current;
     if (!client) return;
+    const operation = beginOperation();
     setBusy(true);
     setActionError(undefined);
-    const request = client.bootstrapSecrets({
+    const input = {
       throttleApiKey: formSecret(form, 'throttleApiKey'),
       webhookSigningSecret: formSecret(form, 'webhookSigningSecret'),
       replace,
-    });
+    };
     form.reset();
     try {
-      await request;
+      await client.bootstrapSecrets(input, {
+        signal: operation.controller.signal,
+      });
+      if (!isCurrent(operation)) return;
       bridgeRef.current?.toast(
         replace ? 'Throttle secrets rotated.' : 'Installation secrets saved.',
         'success',
       );
       setRotationOpen(false);
-      await reload();
+      await load(client, operation);
     } catch (error) {
+      if (!isCurrent(operation)) return;
       setActionError(publicError(error).message);
     } finally {
-      setBusy(false);
+      if (isCurrent(operation)) setBusy(false);
     }
   };
 
   const submitProvider = async (form: HTMLFormElement) => {
     const client = clientRef.current;
     if (!client) return;
+    const operation = beginOperation();
     setBusy(true);
     setActionError(undefined);
-    const request = client.connectProvider(formSecret(form, 'credentials'));
+    const credentials = formSecret(form, 'credentials');
     form.reset();
     try {
-      await request;
+      await client.connectProvider(credentials, {
+        signal: operation.controller.signal,
+      });
+      if (!isCurrent(operation)) return;
       bridgeRef.current?.toast('Provider connected.', 'success');
-      await reload();
+      await load(client, operation);
     } catch (error) {
+      if (!isCurrent(operation)) return;
       setActionError(publicError(error).message);
     } finally {
-      setBusy(false);
+      if (isCurrent(operation)) setBusy(false);
     }
   };
 
   const saveConfiguration = async (configuration: unknown) => {
     const client = clientRef.current;
     if (!client || !validateConfigurationValue(configuration)) return;
+    const operation = beginOperation();
     setBusy(true);
     setActionError(undefined);
     try {
-      await client.saveConfiguration(configuration);
+      await client.saveConfiguration(configuration, {
+        signal: operation.controller.signal,
+      });
+      if (!isCurrent(operation)) return;
       bridgeRef.current?.toast('Configuration saved.', 'success');
     } catch (error) {
+      if (!isCurrent(operation)) return;
       setActionError(publicError(error).message);
     } finally {
-      setBusy(false);
+      if (isCurrent(operation)) setBusy(false);
     }
   };
 
