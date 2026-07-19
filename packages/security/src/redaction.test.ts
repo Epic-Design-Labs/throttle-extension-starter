@@ -105,6 +105,28 @@ describe('structured redaction', () => {
     expect(result[2]).toBe('safe');
   });
 
+  it('redacts sensitive named array properties without invoking accessors', () => {
+    let calls = 0;
+    const input: unknown[] = [];
+    Object.defineProperties(input, {
+      password: { enumerable: true, value: 'leak' },
+      apiKey: {
+        enumerable: true,
+        get: () => {
+          calls += 1;
+          return 'leak';
+        },
+      },
+    });
+
+    const result = redact(input) as unknown[] & Record<string, unknown>;
+
+    expect(result.password).toBe('[REDACTED]');
+    expect(result.apiKey).toBe('[REDACTED]');
+    expect(result).toHaveLength(0);
+    expect(calls).toBe(0);
+  });
+
   it('does not invoke getters or toJSON and excludes symbols and non-enumerable values', () => {
     let calls = 0;
     const input = Object.defineProperties(

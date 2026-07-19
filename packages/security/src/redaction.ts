@@ -72,8 +72,9 @@ const cloneForLogging = (
     const result = new Array<unknown>(length);
     for (const [key, descriptor] of Object.entries(descriptors)) {
       if (key === 'length' || !descriptor.enumerable) continue;
-      const sanitized =
-        'value' in descriptor
+      const sanitized = isSensitiveKey(key)
+        ? REDACTED
+        : 'value' in descriptor
           ? cloneForLogging(descriptor.value, ancestors)
           : '[Getter]';
       Object.defineProperty(result, key, {
