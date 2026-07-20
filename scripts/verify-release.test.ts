@@ -335,8 +335,12 @@ describe('verify-release secret hygiene detection', () => {
   });
 
   it('reports an obvious credential-like value committed to a tracked file', () => {
+    // Built from parts rather than a literal so this test file itself never
+    // contains a contiguous string matching the AWS-key pattern — otherwise
+    // scanning this repo's own tracked files would flag this test file.
+    const fakeAwsAccessKeyId = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
     const root = fixture((r) =>
-      writeFile(r, 'NOTES.md', 'Do not use AKIAABCDEFGHIJKLMNOP in prod.\n'),
+      writeFile(r, 'NOTES.md', `Do not use ${fakeAwsAccessKeyId} in prod.\n`),
     );
     const result = run(root);
     expect(result.status).not.toBe(0);
