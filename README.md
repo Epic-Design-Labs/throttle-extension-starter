@@ -345,6 +345,7 @@ still looks like a placeholder), apply migrations, and set the
 ```bash
 pnpm --filter @starter/cloudflare exec wrangler d1 create <your-database-name>
 pnpm --filter @starter/cloudflare exec wrangler queues create <your-connector-queue-name>
+pnpm --filter @starter/cloudflare exec wrangler queues create <your-connector-dead-letter-queue-name>
 pnpm --filter @starter/cloudflare db:migrate:local   # local D1, for development
 pnpm --filter @starter/cloudflare exec wrangler d1 migrations apply DB --remote
 pnpm --filter @starter/cloudflare exec wrangler secret put ENCRYPTION_KEY
