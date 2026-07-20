@@ -17,7 +17,8 @@
     "test": "pnpm run test:packages && vitest run --config vitest.root.config.ts",
     "test:packages": "pnpm --filter @starter/adapters-cloudflare-queue test && pnpm --filter @starter/adapters-d1 test && pnpm --filter @starter/contracts test && pnpm --filter @starter/security test && pnpm --filter @starter/core test && pnpm --filter @starter/throttle test && pnpm --filter @starter/demo-connector test && pnpm --filter @starter/cloudflare test && pnpm --filter @starter/extension-ui test",
     "test:root": "vitest run --config vitest.root.config.ts",
-    "typecheck": "pnpm -r typecheck && tsc -p tsconfig.tests.json --noEmit"
+    "typecheck": "pnpm -r typecheck && tsc -p tsconfig.tests.json --noEmit",
+    "verify:release": "node scripts/verify-release.mjs"
   },
   "devDependencies": {
     "@eslint/js": "latest",

@@ -319,6 +319,19 @@ See [docs/testing.md](docs/testing.md) for the full test-layer breakdown and
 the required failure/lifecycle matrix a new provider integration should
 cover.
 
+Before publishing a real deployment, also run:
+
+```bash
+pnpm verify:release
+```
+
+This checks for missing release artifacts, tracked secrets, placeholder
+Cloudflare identifiers, and unresolved documentation markers. It's expected
+to pass (with warnings about publisher-supplied values you still need to
+fill in) even on a fresh copy of this template — see
+[docs/release-checklist.md](docs/release-checklist.md) for the full
+pre-publish checklist, including the manual production smoke test.
+
 ## Cloudflare deployment
 
 This starter currently targets **Milestone 1: Cloudflare only** — one
@@ -337,10 +350,13 @@ pnpm --filter @starter/cloudflare exec wrangler d1 migrations apply DB --remote
 pnpm --filter @starter/cloudflare exec wrangler secret put ENCRYPTION_KEY
 pnpm --filter @starter/cloudflare build               # wrangler deploy --dry-run — verify first
 pnpm --filter @starter/cloudflare exec wrangler deploy
+pnpm verify:release                                   # before considering the deploy production-ready
 ```
 
 Full walkthrough, including secret generation and what every `wrangler.jsonc`
 var means: [docs/cloudflare-deployment.md](docs/cloudflare-deployment.md).
+Before treating a deployment as production-ready, work through
+[docs/release-checklist.md](docs/release-checklist.md).
 
 ## Node, PostgreSQL, and Render roadmap (Milestone 2)
 

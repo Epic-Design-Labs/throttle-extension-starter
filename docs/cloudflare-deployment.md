@@ -137,6 +137,24 @@ Test mode per
 [Throttle's Publishing guide](https://docs.usethrottle.dev/developers/extensions/publishing)
 when you're ready.
 
+## 7. Verify release readiness
+
+Before considering any deployment production ready, run:
+
+```bash
+pnpm verify:release
+```
+
+This checks for missing release artifacts, tracked secrets, placeholder
+Cloudflare identifiers left over from this template, and unresolved
+documentation markers. It passes (exit code 0) even on an unconfigured
+copy of this template, but warns until you've replaced the placeholder
+identifiers described in step 1 above. Then work through the full
+publisher checklist in [docs/release-checklist.md](release-checklist.md) —
+clean install/uninstall, least-privilege scopes, HTTPS, health checks,
+a manual production smoke test, rollback, data deletion, and credential
+rotation — before announcing the extension is live.
+
 ## Roadmap: Node/PostgreSQL with Render (Milestone 2)
 
 A second runtime target — a Node process backed by PostgreSQL, deployable
