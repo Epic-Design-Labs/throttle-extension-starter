@@ -313,6 +313,44 @@ describe('verify-release secret hygiene detection', () => {
     expect(result.stdout).toContain('.env');
   });
 
+  it('reports a tracked .env.local file with a real-looking value', () => {
+    const root = fixture((r) =>
+      writeFile(
+        r,
+        '.env.local',
+        'API_SECRET=sk_super_real_secret_value_do_not_commit\n',
+      ),
+    );
+    const result = run(root);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(
+      'Secret-bearing file(s) are tracked in git',
+    );
+    expect(result.stdout).toContain('.env.local');
+  });
+
+  it('reports a tracked non-canonical .env.production and .dev.vars.staging file', () => {
+    const root = fixture((r) => {
+      writeFile(
+        r,
+        '.env.production',
+        'API_SECRET=sk_super_real_secret_value_do_not_commit\n',
+      );
+      writeFile(
+        r,
+        'apps/cloudflare/.dev.vars.staging',
+        'ENCRYPTION_KEY=not-a-real-key\n',
+      );
+    });
+    const result = run(root);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(
+      'Secret-bearing file(s) are tracked in git',
+    );
+    expect(result.stdout).toContain('.env.production');
+    expect(result.stdout).toContain('apps/cloudflare/.dev.vars.staging');
+  });
+
   it('reports a non-blank value in a tracked .example file', () => {
     const root = fixture((r) =>
       writeFile(

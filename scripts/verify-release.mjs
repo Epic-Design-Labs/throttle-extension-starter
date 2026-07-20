@@ -31,6 +31,10 @@ const DOC_FILES_TO_SCAN_FOR_MARKERS = [
   'docs/release-checklist.md',
 ];
 
+// Keep this list in sync with the `required` array in
+// tests/documentation.test.ts ("documents every required root script
+// defined in package.json") — both enumerate the root scripts the README
+// must document, and have drifted before.
 const REQUIRED_ROOT_SCRIPTS = [
   'dev',
   'test',
@@ -75,8 +79,13 @@ const SECRET_PATTERNS = [
   { name: 'a Slack token', pattern: /xox[baprs]-[A-Za-z0-9-]{10,}/u },
 ];
 
+// Matches any env-like file, canonical or not: `.env`, `.env.local`,
+// `.env.production`, `.env.example`, `.dev.vars`, `.dev.vars.staging`, etc.
 const ENV_LIKE_PATTERN = /(^|\/)\.env(\..+)?$|(^|\/)\.dev\.vars(\..+)?$/u;
-const TRACKED_SECRET_FILE_PATTERN = /(^|\/)\.env$|(^|\/)\.dev\.vars$/u;
+
+function isNonExampleEnvLikeFile(path) {
+  return ENV_LIKE_PATTERN.test(path) && !basename(path).endsWith('.example');
+}
 
 function createReport() {
   const report = { passed: [], warnings: [], errors: [] };
@@ -174,15 +183,17 @@ function checkGeneratedOutputIsClean(trackedFiles, { pass, error }) {
 
 function checkNoTrackedSecretFiles(trackedFiles, { pass, error }) {
   if (trackedFiles === undefined) return;
-  const badFiles = trackedFiles.filter((path) =>
-    TRACKED_SECRET_FILE_PATTERN.test(path),
-  );
+  // Any non-`.example` env-like file is a real (or realistic-looking)
+  // secrets file — canonical (`.env`, `.dev.vars`) or not (`.env.local`,
+  // `.env.production`, `.dev.vars.staging`, ...). None of these should ever
+  // be tracked in git; they must stay gitignored.
+  const badFiles = trackedFiles.filter((path) => isNonExampleEnvLikeFile(path));
   if (badFiles.length > 0) {
     error(
       `Secret-bearing file(s) are tracked in git and must stay gitignored: ${badFiles.join(', ')}`,
     );
   } else {
-    pass('No tracked .env or .dev.vars files found in git');
+    pass('No tracked non-example .env/.dev.vars files found in git');
   }
 }
 

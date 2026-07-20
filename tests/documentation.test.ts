@@ -121,6 +121,9 @@ describe('README verified commands', () => {
 
   it('documents every required root script defined in package.json', () => {
     const rootScripts = scripts(rootPackageJson);
+    // Keep this list in sync with REQUIRED_ROOT_SCRIPTS in
+    // scripts/verify-release.mjs — both enumerate the root scripts the
+    // README must document, and have drifted before.
     const required = [
       'dev',
       'test',
@@ -130,6 +133,7 @@ describe('README verified commands', () => {
       'typecheck',
       'format',
       'setup',
+      'verify:release',
     ];
     for (const name of required) {
       expect(rootScripts).toHaveProperty(name);
