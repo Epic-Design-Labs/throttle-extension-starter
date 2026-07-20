@@ -81,15 +81,17 @@ async function sourceFiles(dir: string): Promise<string[]> {
 }
 
 describe('portable package boundaries', () => {
-  it.each(['packages/contracts/src', 'packages/core/src'])(
-    '%s has no runtime imports',
-    async (dir) => {
-      for (const file of await sourceFiles(dir)) {
-        const source = await readFile(file, 'utf8');
-        expect(importSpecifiers(source).filter(isForbiddenImport)).toEqual([]);
-      }
-    },
-  );
+  it.each([
+    'packages/contracts/src',
+    'packages/core/src',
+    'packages/security/src',
+    'packages/throttle/src',
+  ])('%s has no runtime imports', async (dir) => {
+    for (const file of await sourceFiles(dir)) {
+      const source = await readFile(file, 'utf8');
+      expect(importSpecifiers(source).filter(isForbiddenImport)).toEqual([]);
+    }
+  });
 
   it('isolates runtime globals and typechecks root tests with Node 20 types', async () => {
     const [base, rootPackage, testsConfig, appConfig, workspacePaths, vitest] =
