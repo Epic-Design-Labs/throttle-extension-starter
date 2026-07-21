@@ -492,6 +492,7 @@ describe('Throttle webhook ingress', () => {
   const event = {
     id: 'event-1',
     type: 'order.created',
+    version: '1',
     workspaceId: 'workspace-1',
     environmentId: 'environment-1',
     createdAt: now.toISOString(),

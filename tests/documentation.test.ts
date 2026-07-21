@@ -116,7 +116,11 @@ describe('README canonical Throttle links', () => {
 describe('README verified commands', () => {
   it('documents installing dependencies and running setup', () => {
     expect(readme).toContain('pnpm install');
-    expect(readme).toContain('pnpm setup -- --name');
+    expect(readme).toContain('pnpm run setup -- --name');
+    // Bare `pnpm setup` invokes pnpm's own built-in setup command (which
+    // modifies the developer's shell profile) instead of scripts/setup.mjs —
+    // documentation must never instruct it.
+    expect(readme).not.toMatch(/pnpm setup /u);
   });
 
   it('documents every required root script defined in package.json', () => {

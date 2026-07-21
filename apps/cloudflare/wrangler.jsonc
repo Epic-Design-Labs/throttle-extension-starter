@@ -27,11 +27,14 @@
     ],
   },
   "vars": {
-    "THROTTLE_DASHBOARD_ORIGIN": "https://dashboard.usethrottle.dev",
+    "THROTTLE_DASHBOARD_ORIGIN": "https://app.usethrottle.dev",
     "THROTTLE_JWKS_URL": "https://api.usethrottle.dev/.well-known/extension-jwks.json",
     "THROTTLE_EXTENSION_ID": "replace-with-extension-id",
-    "THROTTLE_READ_SCOPE": "connector:read",
-    "THROTTLE_MUTATION_SCOPE": "connector:write",
+    // Scope ids must come from the Throttle scope catalog (GET /api/v1/scopes)
+    // and match what your extension registers. The defaults fit the demo
+    // order-sync connector; replace them with your extension's real scopes.
+    "THROTTLE_READ_SCOPE": "orders:read",
+    "THROTTLE_MUTATION_SCOPE": "fulfillments:write",
     "ENCRYPTION_KEY_VERSION": "1",
     "QUEUE_MAX_ATTEMPTS": "5",
   },

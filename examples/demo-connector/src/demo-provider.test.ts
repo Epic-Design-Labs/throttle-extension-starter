@@ -5,6 +5,7 @@ import { createDemoProvider } from './demo-provider.js';
 const event = {
   id: 'event-1',
   type: 'order.created',
+  version: '1',
   workspaceId: 'workspace',
   environmentId: 'environment',
   createdAt: '2026-07-19T00:00:00.000Z',

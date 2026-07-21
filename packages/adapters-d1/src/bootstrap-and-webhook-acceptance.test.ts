@@ -53,6 +53,7 @@ const job: ConnectorJob = {
   event: {
     id: 'event-1',
     type: 'order.created',
+    version: '1',
     workspaceId: 'task9-workspace',
     environmentId: 'task9-env',
     createdAt: '2026-07-19T10:00:00.000Z',

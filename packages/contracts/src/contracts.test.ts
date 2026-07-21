@@ -15,6 +15,7 @@ const createdAt = '2026-07-19T00:00:00.000Z';
 const event = {
   id: 'evt_1',
   type: 'order.created',
+  version: '1',
   workspaceId: 'ws_1',
   environmentId: 'env_1',
   createdAt,
@@ -119,6 +120,11 @@ describe('Throttle event contract', () => {
     expect(() =>
       throttleEventSchema.parse({ ...event, applicationId: 'app_1' }),
     ).toThrow();
+  });
+
+  it('requires the payload-schema version field', () => {
+    const { version: _version, ...withoutVersion } = event;
+    expect(() => throttleEventSchema.parse(withoutVersion)).toThrow();
   });
 
   it.each(['__proto__', 'prototype', 'constructor'])(

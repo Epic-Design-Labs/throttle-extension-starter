@@ -30,6 +30,7 @@ const job: ConnectorJob = {
   event: {
     id: 'evt',
     type: 'order.created',
+    version: '1',
     workspaceId: 'w',
     environmentId: 'e',
     createdAt: '2026-07-19T00:00:00.000Z',
