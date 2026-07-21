@@ -182,7 +182,7 @@ function nextSteps() {
   2. Run the test suite: pnpm test
   3. Apply local D1 migrations: pnpm --filter @starter/cloudflare db:migrate:local
   4. Expose the UI for iframe testing: pnpm dlx cloudflared tunnel --url http://localhost:5173
-  5. Register the extension in Throttle Test mode: https://dashboard.usethrottle.dev
+  5. Register the extension in Throttle Test mode: https://app.usethrottle.dev
   6. Deploy after configuring Cloudflare resources and secrets: pnpm --filter @starter/cloudflare exec wrangler deploy
 `;
 }

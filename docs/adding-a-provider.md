@@ -52,11 +52,14 @@ without a real external dependency:
 
 ## Replacing it with your integration
 
-### Option 1: `pnpm setup` (recommended for a new product repository)
+### Option 1: `pnpm run setup` (recommended for a new product repository)
 
 ```bash
-pnpm setup -- --name "Your Connector Name" --slug your-connector-slug --remove-demo
+pnpm run setup -- --name "Your Connector Name" --slug your-connector-slug --remove-demo
 ```
+
+(The explicit `run` matters: bare `pnpm setup` invokes pnpm's own built-in
+`setup` command instead of this script.)
 
 `--remove-demo` (see `scripts/setup.mjs` / `scripts/lib/template-files.mjs`)
 replaces `examples/demo-connector/src/demo-provider.ts`,

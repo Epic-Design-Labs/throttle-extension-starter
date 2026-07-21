@@ -78,7 +78,10 @@ function localBridge(): ExtensionBridge {
     extensionId: 'local-extension',
     version: '0.0.0-local',
     role: 'admin',
-    scopes: ['connector:read', 'connector:write'],
+    // Keep in sync with THROTTLE_READ_SCOPE / THROTTLE_MUTATION_SCOPE in
+    // apps/cloudflare/wrangler.jsonc so the mock UI works against a locally
+    // running Worker.
+    scopes: ['orders:read', 'fulfillments:write'],
   };
   return {
     mode: 'local-mock',

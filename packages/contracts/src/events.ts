@@ -53,6 +53,8 @@ export const throttleEventSchema = z
   .object({
     id: z.string().min(1),
     type: z.string().min(1),
+    /** Payload-schema version stamped on every delivered envelope (currently '1'). */
+    version: z.string().min(1),
     workspaceId: z.string().min(1),
     environmentId: z.string().min(1),
     createdAt: z.iso.datetime(),

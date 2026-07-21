@@ -91,7 +91,7 @@ describe('starter setup', () => {
     expect(result.stdout).toContain(
       'pnpm dlx cloudflared tunnel --url http://localhost:5173',
     );
-    expect(result.stdout).toContain('https://dashboard.usethrottle.dev');
+    expect(result.stdout).toContain('https://app.usethrottle.dev');
     expect(result.stdout).toContain(
       'pnpm --filter @starter/cloudflare exec wrangler deploy',
     );

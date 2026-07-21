@@ -9,6 +9,7 @@ import {
 const event = {
   id: 'event-1',
   type: 'order.created',
+  version: '1',
   workspaceId: 'workspace-1',
   environmentId: 'environment-1',
   createdAt: '2026-07-19T10:00:00.000Z',

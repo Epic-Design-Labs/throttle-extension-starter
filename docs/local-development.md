@@ -37,7 +37,7 @@ this file is not part of the template and is git-ignored by the blanket
 # apps/extension-ui/.env.local
 VITE_USE_MOCK_BRIDGE=true
 VITE_CONNECTOR_API_ORIGIN=http://localhost:8787
-VITE_THROTTLE_DASHBOARD_ORIGIN=https://dashboard.usethrottle.dev
+VITE_THROTTLE_DASHBOARD_ORIGIN=https://app.usethrottle.dev
 ```
 
 With `VITE_USE_MOCK_BRIDGE=true`, `createExtensionBridge`
@@ -118,7 +118,7 @@ backend URL at that tunnel instead of `localhost`.
 | Command                                               | What it does                                                                         |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `pnpm install`                                        | Install all workspace dependencies.                                                  |
-| `pnpm setup -- --name "..." --slug ...`               | Customize the template (see [adding-a-provider.md](adding-a-provider.md)).           |
+| `pnpm run setup -- --name "..." --slug ...`           | Customize the template (see [adding-a-provider.md](adding-a-provider.md)).           |
 | `pnpm dev`                                            | Start the extension UI's Vite dev server.                                            |
 | `pnpm --filter @starter/cloudflare exec wrangler dev` | Run the Worker locally against local D1/Queue simulations.                           |
 | `pnpm --filter @starter/cloudflare db:migrate:local`  | Apply D1 migrations to the local database.                                           |
