@@ -19,7 +19,7 @@ const event = {
   workspaceId: 'ws_1',
   environmentId: 'env_1',
   createdAt,
-  data: { orderId: 'ord_1', provider: { region: 'west' } },
+  data: { order: { id: 'ord_1' }, provider: { region: 'west' } },
 };
 
 describe('installation contract', () => {
@@ -123,7 +123,9 @@ describe('Throttle event contract', () => {
   });
 
   it('requires the payload-schema version field', () => {
-    const { version: _version, ...withoutVersion } = event;
+    const withoutVersion = Object.fromEntries(
+      Object.entries(event).filter(([key]) => key !== 'version'),
+    );
     expect(() => throttleEventSchema.parse(withoutVersion)).toThrow();
   });
 
@@ -131,7 +133,7 @@ describe('Throttle event contract', () => {
     'rejects dangerous payload key %s',
     (key) => {
       const data = Object.create(null) as Record<string, unknown>;
-      data.orderId = 'ord_1';
+      data.order = { id: 'ord_1' };
       data[key] = { polluted: true };
 
       expect(() => throttleEventSchema.parse({ ...event, data })).toThrow();

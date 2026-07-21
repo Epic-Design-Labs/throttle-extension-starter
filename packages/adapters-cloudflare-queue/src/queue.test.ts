@@ -19,7 +19,7 @@ const job: ConnectorJob = {
     workspaceId: 'workspace-1',
     environmentId: 'environment-1',
     createdAt: '2026-07-19T00:00:00.000Z',
-    data: { orderId: 'order-1' },
+    data: { order: { id: 'order-1' } },
   },
 };
 

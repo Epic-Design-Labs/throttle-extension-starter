@@ -253,7 +253,7 @@ it('rejects a multi-value audience even when one value matches', async () => {
     verifier.verify(await multipleAudiences.sign(privateKey)),
   ).rejects.toMatchObject({ code: 'authenticationError' });
 });
-it('rejects a token missing only nbf', async () => {
+it('accepts a token without nbf — platform launch tokens never mint one', async () => {
   const missingNbf = new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'key-1' })
     .setIssuer('throttle')
@@ -263,7 +263,7 @@ it('rejects a token missing only nbf', async () => {
     .setExpirationTime(fixedNowSeconds + 600);
   await expect(
     verifier.verify(await missingNbf.sign(privateKey)),
-  ).rejects.toMatchObject({ code: 'authenticationError' });
+  ).resolves.toMatchObject({ installationId: 'inst_1' });
 });
 it('accepts iat/nbf boundaries and rejects old or future iat', async () => {
   const timedToken = (issuedAt: number, notBefore: number) =>

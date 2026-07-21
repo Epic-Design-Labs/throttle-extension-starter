@@ -104,6 +104,11 @@ The rest of `wrangler.jsonc`'s `vars` block matters for a real deployment:
 - `THROTTLE_EXTENSION_ID` — the extension ID assigned when you register the
   extension in the Throttle dashboard (see the root
   [README's Test-mode walkthrough](../README.md#register-in-test-mode-real-throttle-install)).
+- `EXTENSION_UI_ORIGIN` — the exact HTTPS origin your extension UI is
+  deployed on (e.g. a Cloudflare Pages URL). The iframe UI calls this Worker
+  cross-origin, so the Worker's CORS allowlist must include it — without it,
+  every UI request fails preflight. Leave it unset only if this Worker serves
+  the UI itself (same origin).
 - `THROTTLE_READ_SCOPE` / `THROTTLE_MUTATION_SCOPE` — the scope strings your
   extension declares and Throttle grants; see
   [Throttle's Scopes guide](https://docs.usethrottle.dev/developers/extensions/scopes).

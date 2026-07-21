@@ -9,7 +9,7 @@ const event = {
   workspaceId: 'workspace',
   environmentId: 'environment',
   createdAt: '2026-07-19T00:00:00.000Z',
-  data: { orderId: 'order-42' },
+  data: { order: { id: 'order-42' } },
 } as const;
 describe('fictional demo provider', () => {
   test('accepts only the exact demo credential and does not mutate it', async () => {

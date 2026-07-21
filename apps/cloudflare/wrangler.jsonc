@@ -30,6 +30,11 @@
     "THROTTLE_DASHBOARD_ORIGIN": "https://app.usethrottle.dev",
     "THROTTLE_JWKS_URL": "https://api.usethrottle.dev/.well-known/extension-jwks.json",
     "THROTTLE_EXTENSION_ID": "replace-with-extension-id",
+    // The exact HTTPS origin your extension UI is deployed on. The iframe UI
+    // calls this Worker cross-origin, so CORS must allow its origin — without
+    // this, every UI request fails preflight. Uncomment and set it once the
+    // UI has a real origin (e.g. your Cloudflare Pages URL):
+    // "EXTENSION_UI_ORIGIN": "https://your-extension-ui.pages.dev",
     // Scope ids must come from the Throttle scope catalog (GET /api/v1/scopes)
     // and match what your extension registers. The defaults fit the demo
     // order-sync connector; replace them with your extension's real scopes.

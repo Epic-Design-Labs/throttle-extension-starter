@@ -113,6 +113,15 @@ webhook deliveries while iterating), run a second tunnel against
 `wrangler dev`'s port and point your Test-mode extension configuration's
 backend URL at that tunnel instead of `localhost`.
 
+When the UI runs in a real dashboard iframe, its API calls reach the Worker
+from the **UI's own origin** (the tunnel in front of Vite), so the Worker's
+CORS allowlist must include it: add
+`EXTENSION_UI_ORIGIN=https://<your-ui-tunnel>.trycloudflare.com` to
+`apps/cloudflare/.dev.vars` (same variable as the `wrangler.jsonc` var used
+in deployment) and restart `wrangler dev`. Without it, every request from
+the embedded UI fails the CORS preflight and the panel reports the
+connector as unavailable.
+
 ## Common local commands
 
 | Command                                               | What it does                                                                         |

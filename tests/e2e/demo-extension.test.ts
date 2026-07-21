@@ -52,7 +52,9 @@ describe('demo extension lifecycle', () => {
           activity.eventId === event.id && activity.type === 'connector_sync',
       ),
     ).toEqual([expect.objectContaining({ result: 'success' })]);
-    expect(system.providerOrders()).toEqual([event.data.orderId]);
+    expect(system.providerOrders()).toEqual([
+      (event.data.order as { id: string }).id,
+    ]);
   });
 
   test('republishes a crash-gap delivery without duplicating provider effects', async () => {
@@ -73,7 +75,9 @@ describe('demo extension lifecycle', () => {
       attempt: 1,
     });
     expect(system.providerAttemptCount()).toBe(1);
-    expect(system.providerOrders()).toEqual([event.data.orderId]);
+    expect(system.providerOrders()).toEqual([
+      (event.data.order as { id: string }).id,
+    ]);
     expect(await system.connectorActivityCount(event.id)).toBe(1);
   });
 
@@ -112,13 +116,13 @@ describe('demo extension lifecycle', () => {
       ...event,
       id: 'evt_newer',
       createdAt: '2026-07-19T11:59:00.000Z',
-      data: { orderId: 'order-newer' },
+      data: { order: { id: 'order-newer' } },
     };
     const older = {
       ...event,
       id: 'evt_older',
       createdAt: '2026-07-19T10:00:00.000Z',
-      data: { orderId: 'order-older' },
+      data: { order: { id: 'order-older' } },
     };
 
     expect((await system.deliver(newer)).status).toBe(202);
