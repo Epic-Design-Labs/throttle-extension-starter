@@ -9,11 +9,11 @@ import {
 import { MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_JSON_DEPTH } from './events.js';
 
 const rawBody =
-  '{"id":"evt_1","type":"deployment.created","workspaceId":"ws_1","environmentId":"env_1","createdAt":"2026-01-01T00:00:00.000Z","data":{}}';
+  '{"id":"evt_1","type":"deployment.created","version":"1","workspaceId":"ws_1","environmentId":"env_1","createdAt":"2026-01-01T00:00:00.000Z","data":{}}';
 const secret = 'whsec_test';
 const timestamp = 1_767_225_600;
 const digest =
-  'ccfa0262d8bd7bba53bf18ed39e92d97e61898341d4bf387e79ff2470c2c9368';
+  'eaa3ce9a2d307ce160d9963b08859f64c4c392b4f3b8f602ab0b517b39a6c057';
 const signature = `t=${timestamp},v1=${digest}`;
 const secretBytes = (value = secret) => new TextEncoder().encode(value);
 const signBody = async (body: string): Promise<string> => {

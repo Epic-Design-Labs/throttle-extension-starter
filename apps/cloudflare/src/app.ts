@@ -30,6 +30,14 @@ type Scope = {
 };
 export interface AppDependencies {
   dashboardOrigin: string;
+  /**
+   * The exact HTTPS origin the extension UI is served from. The iframe UI
+   * calls this Worker cross-origin (the browser sends the UI's own origin,
+   * never the dashboard's), so it must be allowed by CORS alongside the
+   * dashboard origin. Omit only if the UI is served same-origin by this
+   * Worker.
+   */
+  uiOrigin?: string;
   authorizationScopes: { read: string; mutation: string };
   clock: { now(): Date };
   encodeProviderCredentials(value: string): Uint8Array;
@@ -74,6 +82,13 @@ export function createApp(dependencies: AppDependencies) {
     origin.origin !== dependencies.dashboardOrigin
   )
     throw new Error('Dashboard origin must be an exact HTTPS origin');
+  const corsOrigins = new Set([dependencies.dashboardOrigin]);
+  if (dependencies.uiOrigin !== undefined) {
+    const ui = new URL(dependencies.uiOrigin);
+    if (ui.protocol !== 'https:' || ui.origin !== dependencies.uiOrigin)
+      throw new Error('UI origin must be an exact HTTPS origin');
+    corsOrigins.add(dependencies.uiOrigin);
+  }
   if (
     !dependencies.authorizationScopes.read ||
     !dependencies.authorizationScopes.mutation
@@ -89,14 +104,16 @@ export function createApp(dependencies: AppDependencies) {
       `default-src 'none'; frame-ancestors ${dependencies.dashboardOrigin}`,
     );
     c.header('x-content-type-options', 'nosniff');
-    if (c.req.header('origin') === dependencies.dashboardOrigin) {
-      c.header('access-control-allow-origin', dependencies.dashboardOrigin);
+    const requestOrigin = c.req.header('origin');
+    if (requestOrigin !== undefined && corsOrigins.has(requestOrigin)) {
+      c.header('access-control-allow-origin', requestOrigin);
       c.header('vary', 'Origin');
     }
     await next();
   });
   app.options('/api/*', (c) => {
-    if (c.req.header('origin') !== dependencies.dashboardOrigin)
+    const requestOrigin = c.req.header('origin');
+    if (requestOrigin === undefined || !corsOrigins.has(requestOrigin))
       return c.body(null, 403);
     c.header('access-control-allow-methods', 'GET, PUT, DELETE, OPTIONS');
     c.header('access-control-allow-headers', 'Authorization, Content-Type');

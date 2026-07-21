@@ -8,6 +8,7 @@ export interface Env {
   ENCRYPTION_KEY_VERSION: string;
   ENCRYPTION_KEYRING: string;
   THROTTLE_DASHBOARD_ORIGIN: string;
+  EXTENSION_UI_ORIGIN?: string;
   THROTTLE_JWKS_URL: string;
   THROTTLE_EXTENSION_ID: string;
   THROTTLE_READ_SCOPE: string;
@@ -104,6 +105,12 @@ export function validateEnv(env: Env) {
       'THROTTLE_DASHBOARD_ORIGIN',
       true,
     ),
+    // Optional: the origin the extension UI is served from. The iframe UI
+    // calls this Worker cross-origin, so CORS must allow it. Empty/unset
+    // means "not configured" (only sensible when the Worker serves the UI).
+    uiOrigin: env.EXTENSION_UI_ORIGIN
+      ? httpsUrl(env.EXTENSION_UI_ORIGIN, 'EXTENSION_UI_ORIGIN', true)
+      : undefined,
     jwksUrl: httpsUrl(env.THROTTLE_JWKS_URL, 'THROTTLE_JWKS_URL'),
     extensionId: env.THROTTLE_EXTENSION_ID,
     authorizationScopes: {

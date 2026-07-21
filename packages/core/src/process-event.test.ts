@@ -34,7 +34,7 @@ const job: ConnectorJob = {
     workspaceId: 'w',
     environmentId: 'e',
     createdAt: '2026-07-19T00:00:00.000Z',
-    data: { orderId: 'o' },
+    data: { order: { id: 'o' } },
   },
 };
 function setup(

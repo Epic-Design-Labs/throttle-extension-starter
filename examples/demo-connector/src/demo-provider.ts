@@ -59,7 +59,9 @@ export function createDemoProvider(
           await options.behavior?.onPage(page);
       }
       if (event.type === 'order.created') {
-        const orderId = event.data.orderId;
+        // Real deliveries carry the full order object under data.order —
+        // there is no top-level data.orderId.
+        const orderId = object(event.data.order)?.id;
         if (typeof orderId !== 'string' || orderId.length === 0)
           throw new TerminalProviderError();
         if (!completedKeys.has(idempotencyKey)) {

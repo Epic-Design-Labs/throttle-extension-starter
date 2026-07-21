@@ -6,6 +6,8 @@
   "environmentId": "environment-demo",
   "createdAt": "2026-07-19T11:00:00.000Z",
   "data": {
-    "orderId": "order-1001"
+    "order": {
+      "id": "order-1001"
+    }
   }
 }

@@ -107,7 +107,10 @@ export function createExtensionIdentityVerifier(options: {
           issuer: EXTENSION_ISSUER,
           audience: options.extensionId,
           algorithms: ['RS256'],
-          requiredClaims: ['sub', 'exp', 'nbf', 'iat'],
+          // Platform launch tokens carry iss/sub/aud/iat/exp only — nbf is
+          // never minted, so requiring it would reject every real token.
+          // When nbf IS present, jose still validates it.
+          requiredClaims: ['sub', 'exp', 'iat'],
           maxTokenAge: '10m',
           ...(options.currentDate === undefined
             ? {}

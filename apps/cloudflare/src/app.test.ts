@@ -353,6 +353,35 @@ describe('worker HTTP application', () => {
     );
   });
 
+  test('allows CORS from the configured extension UI origin — the iframe UI calls the Worker from its own origin, not the dashboard', async () => {
+    const { app } = fixture({ uiOrigin: 'https://extension-ui.pages.dev' });
+    const preflight = await app.request('/api/installation', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://extension-ui.pages.dev' },
+    });
+    expect(preflight.status).toBe(204);
+    const allowed = await app.request('/api/installation', {
+      headers: { ...auth, Origin: 'https://extension-ui.pages.dev' },
+    });
+    expect(allowed.headers.get('access-control-allow-origin')).toBe(
+      'https://extension-ui.pages.dev',
+    );
+    const stillDenied = await app.request('/api/installation', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://evil.example' },
+    });
+    expect(stillDenied.status).toBe(403);
+  });
+
+  test('rejects a non-exact or non-HTTPS UI origin at construction', () => {
+    expect(() =>
+      fixture({ uiOrigin: 'http://extension-ui.pages.dev' }),
+    ).toThrow(/UI origin/u);
+    expect(() =>
+      fixture({ uiOrigin: 'https://extension-ui.pages.dev/panel' }),
+    ).toThrow(/UI origin/u);
+  });
+
   test('rejects JSON-like but non-JSON media types', async () => {
     const { app, deps } = fixture();
     const response = await app.request(
@@ -496,7 +525,7 @@ describe('Throttle webhook ingress', () => {
     workspaceId: 'workspace-1',
     environmentId: 'environment-1',
     createdAt: now.toISOString(),
-    data: { orderId: 'order-1' },
+    data: { order: { id: 'order-1' } },
   };
 
   test('persists and enqueues one deterministic job for accepted and duplicate delivery', async () => {

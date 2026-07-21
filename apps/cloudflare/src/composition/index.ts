@@ -125,6 +125,7 @@ export function composeWorker(
     });
   const app = createApp({
     dashboardOrigin: env.dashboardOrigin,
+    ...(env.uiOrigin === undefined ? {} : { uiOrigin: env.uiOrigin }),
     authorizationScopes: env.authorizationScopes,
     clock,
     encodeProviderCredentials: (value) => new TextEncoder().encode(value),
