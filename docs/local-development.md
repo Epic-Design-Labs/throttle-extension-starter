@@ -105,7 +105,7 @@ origin when you register it in Throttle **Test mode** — see the
 [README's Test-mode walkthrough](../README.md#register-in-test-mode-real-throttle-install)
 for the full registration → install → iframe verification → test-event →
 uninstall sequence, and
-[Throttle's Install guide](https://docs.usethrottle.dev/developers/extensions/install)
+[Throttle's Install guide](https://usethrottle.dev/docs/developers/extensions/install/)
 for the platform-side steps.
 
 If you also need the Worker reachable from Throttle (e.g. to receive real

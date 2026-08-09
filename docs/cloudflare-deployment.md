@@ -111,7 +111,7 @@ The rest of `wrangler.jsonc`'s `vars` block matters for a real deployment:
   the UI itself (same origin).
 - `THROTTLE_READ_SCOPE` / `THROTTLE_MUTATION_SCOPE` — the scope strings your
   extension declares and Throttle grants; see
-  [Throttle's Scopes guide](https://docs.usethrottle.dev/developers/extensions/scopes).
+  [Throttle's Scopes guide](https://usethrottle.dev/docs/developers/extensions/scopes/).
 - `QUEUE_MAX_ATTEMPTS` — the durable business-retry cap enforced by
   `packages/core`'s retry policy (defaults to `5`; see
   [architecture.md](architecture.md#webhook--queue--provider)). This is
@@ -139,7 +139,7 @@ pnpm --filter @starter/cloudflare exec wrangler deploy
 After deploying, point your Throttle extension's registered backend/UI
 URLs at the deployed Worker and hosted UI, and move the installation out of
 Test mode per
-[Throttle's Publishing guide](https://docs.usethrottle.dev/developers/extensions/publishing)
+[Throttle's Publishing guide](https://usethrottle.dev/docs/developers/extensions/publishing/)
 when you're ready.
 
 ## 7. Verify release readiness

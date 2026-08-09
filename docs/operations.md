@@ -131,7 +131,7 @@ If you suspect a credential or signing secret has been compromised:
   schema change as a coordinated deploy of both `apps/cloudflare` and
   `apps/extension-ui` (they should always be deployed together from the
   same commit).
-- See [Throttle's Versioning guide](https://docs.usethrottle.dev/developers/extensions/versioning)
+- See [Throttle's Versioning guide](https://usethrottle.dev/docs/developers/extensions/versioning/)
   for how the platform expects extension version publication and rollout to
   work.
 
@@ -139,7 +139,7 @@ If you suspect a credential or signing secret has been compromised:
 
 When you stop maintaining an extension built from this starter:
 
-1. Follow [Throttle's Publishing guide](https://docs.usethrottle.dev/developers/extensions/publishing)
+1. Follow [Throttle's Publishing guide](https://usethrottle.dev/docs/developers/extensions/publishing/)
    to unpublish or mark the extension deprecated in the dashboard so new
    installs are blocked.
 2. Decide what to do with existing installations' data under your own data

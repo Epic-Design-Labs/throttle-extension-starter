@@ -20,12 +20,12 @@ integration only), or **hybrid** (both). This starter implements the
 installation/configuration/activity screens, backed by a Cloudflare Worker
 (`apps/cloudflare`) that verifies Throttle webhooks, talks to your
 third-party provider, and stores per-installation state. See
-[Throttle's Extension overview](https://docs.usethrottle.dev/developers/extensions/overview)
-and [Get Started guide](https://docs.usethrottle.dev/developers/extensions/get-started)
+[Throttle's Extension overview](https://usethrottle.dev/docs/developers/extensions/overview/)
+and [Get Started guide](https://usethrottle.dev/docs/developers/extensions/get-started/)
 for the platform's own description of each shape and how to choose; see
-also [Throttle's starter-repository guide](https://docs.usethrottle.dev/developers/extensions/starter-repository)
+also [Throttle's starter-repository guide](https://usethrottle.dev/docs/developers/extensions/starter-repository/)
 for how this starter fits into that picture, and the
-[Build guide](https://docs.usethrottle.dev/developers/extensions/build) for
+[Build guide](https://usethrottle.dev/docs/developers/extensions/build/) for
 the general extension build process.
 
 ## What this starter provides vs. what you own
@@ -112,7 +112,7 @@ This gets the embedded UI running locally against a mocked bridge — no
 Throttle account or Cloudflare deploy required yet.
 
 ```bash
-git clone <this-repository-url>
+git clone https://github.com/Epic-Design-Labs/throttle-extension-starter.git
 cd throttle-extension-starter
 pnpm install
 ```
@@ -171,26 +171,26 @@ extension to be publicly reachable by anyone but you:
 2. **Register the extension** in the
    [Throttle dashboard](https://app.usethrottle.dev) as a Test-mode
    extension, following
-   [Throttle's Get Started guide](https://docs.usethrottle.dev/developers/extensions/get-started).
+   [Throttle's Get Started guide](https://usethrottle.dev/docs/developers/extensions/get-started/).
    This gives you an extension ID (set `THROTTLE_EXTENSION_ID` — see
    [Configuration and secrets](#configuration-and-secrets)) and lets you
-   declare the [events](https://docs.usethrottle.dev/developers/extensions/events)
-   and [scopes](https://docs.usethrottle.dev/developers/extensions/scopes)
+   declare the [events](https://usethrottle.dev/docs/developers/extensions/events/)
+   and [scopes](https://usethrottle.dev/docs/developers/extensions/scopes/)
    your extension needs.
 3. **Publish a Test-mode version** of the extension pointing at your tunnel
    UI URL and your deployed (or tunneled) Worker backend URL, per
-   [Throttle's Versioning guide](https://docs.usethrottle.dev/developers/extensions/versioning)
+   [Throttle's Versioning guide](https://usethrottle.dev/docs/developers/extensions/versioning/)
    and, once you're ready to move beyond Test mode,
-   [Throttle's Publishing guide](https://docs.usethrottle.dev/developers/extensions/publishing).
+   [Throttle's Publishing guide](https://usethrottle.dev/docs/developers/extensions/publishing/).
 4. **Install it** into a Test-mode workspace/environment — see
-   [Throttle's Installing guide](https://docs.usethrottle.dev/developers/extensions/install).
+   [Throttle's Installing guide](https://usethrottle.dev/docs/developers/extensions/install/).
    This is what actually loads your UI in a real iframe and issues a real
    identity JWT.
 5. **Verify the iframe loads** and completes the bridge handshake (the UI
    should move out of its loading state and show the bootstrap screen), then
    walk through bootstrap → connect → configure using your real backend.
 6. **Send a test event.** Use Throttle's test-event delivery (see
-   [Throttle's Testing guide](https://docs.usethrottle.dev/developers/extensions/testing))
+   [Throttle's Testing guide](https://usethrottle.dev/docs/developers/extensions/testing/))
    to deliver a real signed webhook and confirm it's accepted (`202`) and
    shows up via `GET /api/activity` once processed.
 7. **Uninstall it** when you're done iterating, and confirm (via
@@ -200,21 +200,21 @@ extension to be publicly reachable by anyone but you:
 
 ## Configuration and secrets
 
-| Name                                                                                  | Where it lives                                                           | Classification                       | Notes                                                                                                                                                                                                                                                   |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `THROTTLE_DASHBOARD_ORIGIN`                                                           | `.env.example` (local tooling) + `wrangler.jsonc` var                    | Public                               | Exact HTTPS origin of the Throttle dashboard; used for CORS/CSP `frame-ancestors` and enforced as an exact-origin match.                                                                                                                                |
-| `EXTENSION_UI_ORIGIN`                                                                 | `wrangler.jsonc` var (commented until the UI is deployed)                | Public                               | Exact HTTPS origin your extension UI is served from. The iframe UI calls the Worker cross-origin (the browser sends the UI's origin, not the dashboard's), so CORS must allow it — leave unset only if this Worker serves the UI itself.                |
-| `THROTTLE_JWKS_URL`                                                                   | `.env.example` + `wrangler.jsonc` var                                    | Public                               | HTTPS URL of Throttle's extension JWKS, used to verify identity JWTs (RS256).                                                                                                                                                                           |
-| `THROTTLE_EXTENSION_ID`                                                               | `wrangler.jsonc` var                                                     | Public, but unique to your extension | Assigned when you register in Throttle; used as the JWT audience. The Worker refuses to boot if this still looks like a placeholder.                                                                                                                    |
-| `THROTTLE_READ_SCOPE` / `THROTTLE_MUTATION_SCOPE`                                     | `wrangler.jsonc` var                                                     | Public                               | The scope strings your extension declares and Throttle grants — must be scope ids from the [Throttle scope catalog](https://docs.usethrottle.dev/developers/extensions/scopes) (the defaults fit the demo order-sync connector; replace with your own). |
-| `ENCRYPTION_KEY_VERSION`                                                              | `wrangler.jsonc` var                                                     | Public                               | Integer identifying which key in the keyring is "current."                                                                                                                                                                                              |
-| `QUEUE_MAX_ATTEMPTS`                                                                  | `wrangler.jsonc` var                                                     | Public                               | Durable business-retry cap (independent of Cloudflare's own queue delivery attempts).                                                                                                                                                                   |
-| `ENCRYPTION_KEY`                                                                      | `apps/cloudflare/.dev.vars` (local) / Worker secret (deployed)           | **Platform secret**                  | 32-byte base64url AES-256-GCM root key. Never commit a real value — `.dev.vars` is git-ignored; use `wrangler secret put` in production.                                                                                                                |
-| `ENCRYPTION_KEYRING`                                                                  | same                                                                     | **Platform secret**                  | JSON map of prior key versions → keys, used during [key rotation](docs/operations.md#key-rotation).                                                                                                                                                     |
-| `THROTTLE_BASE_URL`                                                                   | `.env.example` (local tooling)                                           | Public / reserved                    | Not currently read by any script in this repository; reserved for local tooling that talks to the Throttle API directly.                                                                                                                                |
-| `LOCAL_ENCRYPTION_KEY`                                                                | `.env.example` (local tooling)                                           | Local-only / reserved                | Not currently read by any script in this repository. Do not confuse with the Worker's own `ENCRYPTION_KEY` secret above.                                                                                                                                |
-| `throttleApiKey`, `webhookSigningSecret`, `providerCredentials`                       | Supplied through the iframe UI, stored encrypted in D1's `secrets` table | **Per installation secret**          | Encrypted at rest (AES-256-GCM, with the installation ID baked into the additional authenticated data so a ciphertext can't be moved to another installation); never logged in plaintext.                                                               |
-| `VITE_USE_MOCK_BRIDGE`, `VITE_CONNECTOR_API_ORIGIN`, `VITE_THROTTLE_DASHBOARD_ORIGIN` | `apps/extension-ui/.env.local`                                           | **Browser-safe**                     | Vite inlines these into the client bundle at build time — never put an actual secret in a `VITE_` variable.                                                                                                                                             |
+| Name                                                                                  | Where it lives                                                           | Classification                       | Notes                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `THROTTLE_DASHBOARD_ORIGIN`                                                           | `.env.example` (local tooling) + `wrangler.jsonc` var                    | Public                               | Exact HTTPS origin of the Throttle dashboard; used for CORS/CSP `frame-ancestors` and enforced as an exact-origin match.                                                                                                                                 |
+| `EXTENSION_UI_ORIGIN`                                                                 | `wrangler.jsonc` var (commented until the UI is deployed)                | Public                               | Exact HTTPS origin your extension UI is served from. The iframe UI calls the Worker cross-origin (the browser sends the UI's origin, not the dashboard's), so CORS must allow it — leave unset only if this Worker serves the UI itself.                 |
+| `THROTTLE_JWKS_URL`                                                                   | `.env.example` + `wrangler.jsonc` var                                    | Public                               | HTTPS URL of Throttle's extension JWKS, used to verify identity JWTs (RS256).                                                                                                                                                                            |
+| `THROTTLE_EXTENSION_ID`                                                               | `wrangler.jsonc` var                                                     | Public, but unique to your extension | Assigned when you register in Throttle; used as the JWT audience. The Worker refuses to boot if this still looks like a placeholder.                                                                                                                     |
+| `THROTTLE_READ_SCOPE` / `THROTTLE_MUTATION_SCOPE`                                     | `wrangler.jsonc` var                                                     | Public                               | The scope strings your extension declares and Throttle grants — must be scope ids from the [Throttle scope catalog](https://usethrottle.dev/docs/developers/extensions/scopes/) (the defaults fit the demo order-sync connector; replace with your own). |
+| `ENCRYPTION_KEY_VERSION`                                                              | `wrangler.jsonc` var                                                     | Public                               | Integer identifying which key in the keyring is "current."                                                                                                                                                                                               |
+| `QUEUE_MAX_ATTEMPTS`                                                                  | `wrangler.jsonc` var                                                     | Public                               | Durable business-retry cap (independent of Cloudflare's own queue delivery attempts).                                                                                                                                                                    |
+| `ENCRYPTION_KEY`                                                                      | `apps/cloudflare/.dev.vars` (local) / Worker secret (deployed)           | **Platform secret**                  | 32-byte base64url AES-256-GCM root key. Never commit a real value — `.dev.vars` is git-ignored; use `wrangler secret put` in production.                                                                                                                 |
+| `ENCRYPTION_KEYRING`                                                                  | same                                                                     | **Platform secret**                  | JSON map of prior key versions → keys, used during [key rotation](docs/operations.md#key-rotation).                                                                                                                                                      |
+| `THROTTLE_BASE_URL`                                                                   | `.env.example` (local tooling)                                           | Public / reserved                    | Not currently read by any script in this repository; reserved for local tooling that talks to the Throttle API directly.                                                                                                                                 |
+| `LOCAL_ENCRYPTION_KEY`                                                                | `.env.example` (local tooling)                                           | Local-only / reserved                | Not currently read by any script in this repository. Do not confuse with the Worker's own `ENCRYPTION_KEY` secret above.                                                                                                                                 |
+| `throttleApiKey`, `webhookSigningSecret`, `providerCredentials`                       | Supplied through the iframe UI, stored encrypted in D1's `secrets` table | **Per installation secret**          | Encrypted at rest (AES-256-GCM, with the installation ID baked into the additional authenticated data so a ciphertext can't be moved to another installation); never logged in plaintext.                                                                |
+| `VITE_USE_MOCK_BRIDGE`, `VITE_CONNECTOR_API_ORIGIN`, `VITE_THROTTLE_DASHBOARD_ORIGIN` | `apps/extension-ui/.env.local`                                           | **Browser-safe**                     | Vite inlines these into the client bundle at build time — never put an actual secret in a `VITE_` variable.                                                                                                                                              |
 
 Copy `.env.example` to `.env` and `apps/cloudflare/.dev.vars.example` to
 `apps/cloudflare/.dev.vars` to get started locally; both `.example` files
@@ -258,7 +258,7 @@ types and scopes, and evolving the configuration schema.
   verification gap.
 - **Identity verification.** The embedded UI's every API call carries an
   extension identity JWT (see
-  [Throttle's Identity guide](https://docs.usethrottle.dev/developers/extensions/identity)),
+  [Throttle's Identity guide](https://usethrottle.dev/docs/developers/extensions/identity/)),
   verified as RS256 against Throttle's JWKS with issuer, audience,
   algorithm, and claim-shape checks — never trusted unverified.
 - **Credential encryption.** Provider credentials and the webhook signing
@@ -284,7 +284,7 @@ types and scopes, and evolving the configuration schema.
   provider account.
 - **Data retention and version compatibility.** See
   [docs/operations.md](docs/operations.md) (and
-  [Throttle's Operations guide](https://docs.usethrottle.dev/developers/extensions/operations)
+  [Throttle's Operations guide](https://usethrottle.dev/docs/developers/extensions/operations/)
   for the platform-level operational expectations) for retention guidance
   and how contract schema changes should be coordinated across the UI and
   Worker.
@@ -433,15 +433,15 @@ dependency-boundary rules, and commit/PR expectations.
 For questions or issues with this starter template, open an issue in this
 repository. For questions about the Throttle platform itself, see the
 canonical docs linked throughout this README, the
-[API reference](https://docs.usethrottle.dev/developers/api-reference), the
-[public packages reference](https://docs.usethrottle.dev/developers/packages),
+[API reference](https://usethrottle.dev/docs/developers/api-reference/), the
+[public packages reference](https://usethrottle.dev/docs/developers/packages/),
 or email `support@usethrottle.dev`. For platform status, see the Throttle
 dashboard rather than a separate status page.
 
 ## Security
 
 See [SECURITY.md](SECURITY.md) for how to report a vulnerability, and
-[Throttle's Security guide](https://docs.usethrottle.dev/developers/extensions/security)
+[Throttle's Security guide](https://usethrottle.dev/docs/developers/extensions/security/)
 for platform-level extension security guidance.
 
 ## License

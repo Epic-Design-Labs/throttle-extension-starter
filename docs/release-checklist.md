@@ -26,7 +26,7 @@ Throttle installation.
       behind by an incomplete cleanup.
 - [ ] **Least-privilege scopes requested.** Confirm the extension only
       requests the Throttle scopes it actually uses (see
-      [Throttle's Scopes guide](https://docs.usethrottle.dev/developers/extensions/scopes))
+      [Throttle's Scopes guide](https://usethrottle.dev/docs/developers/extensions/scopes/))
       and that `THROTTLE_READ_SCOPE` / `THROTTLE_MUTATION_SCOPE` in
       `apps/cloudflare/wrangler.jsonc` match what you registered in the
       Throttle dashboard.
@@ -106,8 +106,9 @@ things only you, the publisher, can supply:
 - Placeholder Cloudflare identifiers in `apps/cloudflare/wrangler.jsonc`
   (Worker name, D1 database name/ID, queue names) until you replace them
   per [cloudflare-deployment.md](cloudflare-deployment.md).
-- The placeholder `<this-repository-url>` in the README quickstart until
-  you replace it with your published repository's real URL.
+- If the README quickstart still contains the placeholder
+  `<this-repository-url>` (rather than a real clone URL), until you replace
+  it with your published repository's real URL.
 
 Warnings do not fail the command; they are a reminder of what still needs
 publisher-specific values before a real deploy. If `pnpm verify:release`
