@@ -104,8 +104,8 @@ type:
 
 1. Register the event and any new scopes your extension needs in the
    Throttle dashboard — see
-   [Throttle's Events guide](https://docs.usethrottle.dev/developers/extensions/events)
-   and [Scopes guide](https://docs.usethrottle.dev/developers/extensions/scopes).
+   [Throttle's Events guide](https://usethrottle.dev/docs/developers/extensions/events/)
+   and [Scopes guide](https://usethrottle.dev/docs/developers/extensions/scopes/).
 2. Branch on `event.type` inside your provider's `handleEvent` (see the
    demo provider's `if (event.type === 'order.created')` check) and read
    whatever fields you need from `event.data` — validate their shape
