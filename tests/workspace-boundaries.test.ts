@@ -94,15 +94,23 @@ describe('portable package boundaries', () => {
   });
 
   it('isolates runtime globals and typechecks root tests with Node 20 types', async () => {
-    const [base, rootPackage, testsConfig, appConfig, workspacePaths, vitest] =
-      await Promise.all([
-        readFile('tsconfig.base.json', 'utf8'),
-        readFile('package.json', 'utf8'),
-        readFile('tsconfig.tests.json', 'utf8'),
-        readFile('apps/cloudflare/tsconfig.json', 'utf8'),
-        readFile('tsconfig.workspace-paths.json', 'utf8'),
-        readFile('vitest.root.config.ts', 'utf8'),
-      ]);
+    const [
+      base,
+      rootPackage,
+      testsConfig,
+      appConfig,
+      workspacePaths,
+      rootVitest,
+      aliasRegistry,
+    ] = await Promise.all([
+      readFile('tsconfig.base.json', 'utf8'),
+      readFile('package.json', 'utf8'),
+      readFile('tsconfig.tests.json', 'utf8'),
+      readFile('apps/cloudflare/tsconfig.json', 'utf8'),
+      readFile('tsconfig.workspace-paths.json', 'utf8'),
+      readFile('vitest.root.config.ts', 'utf8'),
+      readFile('vitest.workspace-aliases.mjs', 'utf8'),
+    ]);
     expect(JSON.parse(base)).toMatchObject({ compilerOptions: { types: [] } });
     expect(JSON.parse(rootPackage)).toMatchObject({
       scripts: {
@@ -137,9 +145,14 @@ describe('portable package boundaries', () => {
       '@starter/security': ['./packages/security/src/index.ts'],
       '@starter/throttle': ['./packages/throttle/src/index.ts'],
     });
+    // The root vitest config shares the alias registry rather than
+    // duplicating it; verify the root config consumes the registry and that
+    // the registry stays in lockstep with the tsconfig paths.
+    expect(rootVitest).toContain('vitest.workspace-aliases.mjs');
+    expect(rootVitest).toContain('workspaceAliases');
     for (const [alias, [source]] of Object.entries(paths)) {
-      expect(vitest).toContain(`'${alias}'`);
-      expect(vitest).toContain(source!.replace(/^\.\//u, ''));
+      expect(aliasRegistry).toContain(`'${alias}'`);
+      expect(aliasRegistry).toContain(source!.replace(/^\.\//u, ''));
     }
   });
 
