@@ -14,6 +14,12 @@ export interface Env {
   THROTTLE_READ_SCOPE: string;
   THROTTLE_MUTATION_SCOPE: string;
   QUEUE_MAX_ATTEMPTS: string;
+  /**
+   * Name of the dead-letter queue, matching wrangler.jsonc's
+   * `dead_letter_queue`. Set so the queue() handler can tell a dead-lettered
+   * batch apart and record it; unset means "no dead-letter consumer".
+   */
+  DEAD_LETTER_QUEUE?: string;
 }
 
 function bytes(value: unknown): Uint8Array {
@@ -97,9 +103,18 @@ export function validateEnv(env: Env) {
   );
   if (queueMaxAttempts > 100)
     throw new Error('QUEUE_MAX_ATTEMPTS is too large');
+  if (
+    env.DEAD_LETTER_QUEUE !== undefined &&
+    (typeof env.DEAD_LETTER_QUEUE !== 'string' ||
+      env.DEAD_LETTER_QUEUE.length === 0)
+  )
+    throw new Error('DEAD_LETTER_QUEUE must be a non-empty string when set');
   return {
     database: env.DB,
     queue: env.CONNECTOR_QUEUE,
+    ...(env.DEAD_LETTER_QUEUE === undefined
+      ? {}
+      : { deadLetterQueue: env.DEAD_LETTER_QUEUE }),
     dashboardOrigin: httpsUrl(
       env.THROTTLE_DASHBOARD_ORIGIN,
       'THROTTLE_DASHBOARD_ORIGIN',

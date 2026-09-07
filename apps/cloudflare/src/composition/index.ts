@@ -1,7 +1,10 @@
 import {
   consumeConnectorQueue,
+  consumeDeadLetterQueue,
+  createActivityStoreDeadLetterRecorder,
   createActivityStoreQueueFailureRecorder,
   createCloudflareQueueProducer,
+  createQueueRouter,
   type CloudflareQueueMessageBatch,
   type ConnectorQueueConsumerDependencies,
 } from '@starter/adapters-cloudflare-queue';
@@ -226,5 +229,23 @@ export function composeWorker(
     }),
     maxDeliveryAttempts: env.queueMaxAttempts,
   });
-  return { app, queue };
+  // Route by queue name so the single queue() handler records dead-lettered
+  // jobs (leaving a trace) instead of silently connector-processing them. When
+  // no dead-letter queue is configured, every batch routes to the connector.
+  const recordDeadLetter = createActivityStoreDeadLetterRecorder({
+    activities: adapters.activities,
+    clock,
+  });
+  const routedQueue = createQueueRouter({
+    ...(env.deadLetterQueue === undefined
+      ? {}
+      : { deadLetterQueue: env.deadLetterQueue }),
+    connector: queue,
+    deadLetter: (batch) =>
+      consumeDeadLetterQueue(batch, {
+        recordDeadLetter,
+        logger: safeLogger,
+      }),
+  });
+  return { app, queue: routedQueue };
 }

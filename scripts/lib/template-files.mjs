@@ -102,12 +102,18 @@ export function templateEdits(current, next) {
       apply(contents) {
         let result = contents;
         for (const kind of ['worker', 'database', 'queue', 'deadLetterQueue']) {
+          // The connector queue name appears twice (producer + consumer); the
+          // dead-letter queue name appears three times (the main consumer's
+          // dead_letter_queue, the dead-letter consumer's own queue, and the
+          // DEAD_LETTER_QUEUE var).
+          const occurrences =
+            kind === 'queue' ? 2 : kind === 'deadLetterQueue' ? 3 : 1;
           result = replaceExact(
             result,
             `"${wranglerValue(kind, current.slug, currentIsOriginal)}"`,
             `"${wranglerValue(kind, next.slug, nextIsOriginal)}"`,
             this.path,
-            kind === 'queue' ? 2 : 1,
+            occurrences,
           );
         }
         return result;

@@ -11,6 +11,15 @@ export type {
 } from './producer.js';
 export { consumeConnectorQueue } from './consumer.js';
 export { createActivityStoreQueueFailureRecorder } from './failure-recorder.js';
+export {
+  consumeDeadLetterQueue,
+  createActivityStoreDeadLetterRecorder,
+  createQueueRouter,
+} from './dead-letter.js';
+export type {
+  DeadLetteredJob,
+  DeadLetterConsumerDependencies,
+} from './dead-letter.js';
 export type {
   CloudflareQueueMessage,
   CloudflareQueueMessageBatch,

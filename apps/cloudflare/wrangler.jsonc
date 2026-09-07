@@ -24,6 +24,13 @@
         "max_retries": 4,
         "dead_letter_queue": "replace-with-connector-dead-letter-queue",
       },
+      // Drained only so an abandoned job leaves a trace: the consumer records
+      // a terminal activity and acks. There is no queue behind this one, so
+      // max_retries is 0 — a retry here only replays until the message expires.
+      {
+        "queue": "replace-with-connector-dead-letter-queue",
+        "max_retries": 0,
+      },
     ],
   },
   "vars": {
@@ -42,5 +49,9 @@
     "THROTTLE_MUTATION_SCOPE": "fulfillments:write",
     "ENCRYPTION_KEY_VERSION": "1",
     "QUEUE_MAX_ATTEMPTS": "5",
+    // Must match the dead_letter_queue name above so the queue() handler can
+    // tell a dead-lettered batch apart and record it. Unset means no
+    // dead-letter consumer runs.
+    "DEAD_LETTER_QUEUE": "replace-with-connector-dead-letter-queue",
   },
 }
