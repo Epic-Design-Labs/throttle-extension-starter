@@ -29,16 +29,26 @@ script — see [Running the Worker locally](#running-the-worker-locally)
 below for how to exercise the backend directly.
 
 By default the UI expects three Vite environment variables, which you
-supply via `apps/extension-ui/.env.local` (Vite's standard convention —
-this file is not part of the template and is git-ignored by the blanket
-`.env` rule):
+supply via `apps/extension-ui/.env.development.local` (git-ignored, and —
+crucially — **mode-scoped**, so these development-only values can never
+reach a production `vite build`):
 
 ```bash
-# apps/extension-ui/.env.local
+# apps/extension-ui/.env.development.local
 VITE_USE_MOCK_BRIDGE=true
 VITE_CONNECTOR_API_ORIGIN=http://localhost:8787
 VITE_THROTTLE_DASHBOARD_ORIGIN=https://app.usethrottle.dev
 ```
+
+Do **not** put these in `.env.local`: Vite applies `.env.local` in _every_
+mode, so `VITE_USE_MOCK_BRIDGE=true` set there silently follows you into
+`vite build` and ships — surfacing only as an opaque "Unable to verify the
+host" error in the deployed iframe. Deployed values live in
+`apps/extension-ui/.env.production` (copy it from the tracked
+`.env.production.example`; the real file is git-ignored like every other
+non-example env file); a production build fails fast (see
+`assertDeployableEnv` in `apps/extension-ui/vite.config.ts`) if a mock flag
+or non-HTTPS origin reaches it.
 
 With `VITE_USE_MOCK_BRIDGE=true`, `createExtensionBridge`
 (`apps/extension-ui/src/bridge.ts`) returns a local mock bridge context

@@ -55,7 +55,16 @@ on unbounded history in either table.
 Provider credentials and webhook signing secrets are encrypted at rest with
 AES-256-GCM under a versioned root key (see
 [architecture.md](architecture.md) and
-`packages/security/src/encryption.ts`). To rotate:
+`packages/security/src/encryption.ts`).
+
+> **Keep a retrievable copy of `ENCRYPTION_KEY` from the moment you first set
+> it.** Cloudflare Worker secrets are write-only — `wrangler secret list`
+> returns names and types, never values — so step 2 below, which needs the
+> value of the _current_ key, is impossible unless you saved it out of band
+> (e.g. in a secrets manager) at provisioning time. Without that copy, key
+> rotation cannot be performed for the life of the deployment.
+
+To rotate:
 
 1. Generate a new 32-byte base64url key.
 2. Set `ENCRYPTION_KEYRING` (a Worker secret) to a JSON object mapping the
