@@ -7,7 +7,11 @@
   "createdAt": "2026-07-19T11:00:00.000Z",
   "data": {
     "order": {
-      "id": "order-1001"
+      "id": "order-1001",
+      "shippingAddress": {
+        "line1": "1 Market St",
+        "state": "CA"
+      }
     }
   }
 }

@@ -310,8 +310,8 @@ export async function createTestSystem(
   let providerAttempts = 0;
   const demo = createDemoProvider({
     sink: {
-      async recordOrderCreated(orderId) {
-        orders.push(orderId);
+      async recordShipment(shipment) {
+        orders.push(shipment.referenceCode);
       },
     },
   });

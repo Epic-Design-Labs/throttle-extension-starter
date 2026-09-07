@@ -9,7 +9,13 @@ const event = {
   workspaceId: 'workspace',
   environmentId: 'environment',
   createdAt: '2026-07-19T00:00:00.000Z',
-  data: { order: { id: 'order-42' } },
+  // Throttle field names: id / shippingAddress.line1 / shippingAddress.state.
+  data: {
+    order: {
+      id: 'order-42',
+      shippingAddress: { line1: '1 Market St', state: 'CA' },
+    },
+  },
 } as const;
 describe('fictional demo provider', () => {
   test('accepts only the exact demo credential and does not mutate it', async () => {
@@ -23,12 +29,12 @@ describe('fictional demo provider', () => {
       provider.validateCredentials(new TextEncoder().encode('demo-valid\n')),
     ).rejects.toBeInstanceOf(TerminalProviderError);
   });
-  test('records order.created IDs in an injected sink', async () => {
-    const ids: string[] = [];
+  test('translates Throttle order fields into the demo provider shape', async () => {
+    const shipments: unknown[] = [];
     const provider = createDemoProvider({
       sink: {
-        recordOrderCreated: async (id) => {
-          ids.push(id);
+        recordShipment: async (shipment) => {
+          shipments.push(shipment);
         },
       },
     });
@@ -39,14 +45,22 @@ describe('fictional demo provider', () => {
       credentials: new TextEncoder().encode('demo-valid'),
       configuration: { mode: 'normal' },
     });
-    expect(ids).toEqual(['order-42']);
+    // id -> referenceCode, line1 -> addressLine1, state -> stateProvince: the
+    // sink never sees a Throttle field name.
+    expect(shipments).toEqual([
+      {
+        referenceCode: 'order-42',
+        addressLine1: '1 Market St',
+        stateProvince: 'CA',
+      },
+    ]);
   });
   test('deduplicates an effect by stable provider idempotency key', async () => {
-    const ids: string[] = [];
+    const references: string[] = [];
     const provider = createDemoProvider({
       sink: {
-        recordOrderCreated: async (id) => {
-          ids.push(id);
+        recordShipment: async (shipment) => {
+          references.push(shipment.referenceCode);
         },
       },
     });
@@ -59,7 +73,7 @@ describe('fictional demo provider', () => {
     };
     await provider.handleEvent(input);
     await provider.handleEvent(input);
-    expect(ids).toEqual(['order-42']);
+    expect(references).toEqual(['order-42']);
   });
   test.each(['429', '500', 'timeout'] as const)(
     'offers deterministic retry mode %s',
