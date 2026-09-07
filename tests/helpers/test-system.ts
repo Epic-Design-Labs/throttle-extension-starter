@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 import {
   activitySchema,
@@ -174,34 +174,45 @@ async function createIdentity(clock: TestClock) {
   };
 }
 
-async function applyMigrations(database: D1Database): Promise<void> {
-  for (const relative of [
-    '../../packages/adapters-d1/migrations/0001_initial.sql',
-    '../../packages/adapters-d1/migrations/0002_configurations.sql',
-    '../../packages/adapters-d1/migrations/0003_queue_dispatch.sql',
-  ]) {
-    const migration = await readFile(
-      new URL(relative, import.meta.url),
-      'utf8',
-    );
-    const statements: string[] = [];
-    let pending = '';
-    let trigger = false;
-    for (const line of migration.split(/\r?\n/u)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (!pending) trigger = trimmed.startsWith('CREATE TRIGGER');
-      pending += `${trimmed}\n`;
-      if (
-        (!trigger && trimmed.endsWith(';')) ||
-        (trigger && trimmed.endsWith('END;'))
-      ) {
-        statements.push(pending.trim());
-        pending = '';
-        trigger = false;
-      }
+// Splits migration SQL into executable statements, stripping `--` line
+// comments (so a `;` inside a comment can't prematurely end a statement) and
+// keeping multi-line CREATE TRIGGER ... END; blocks intact. Kept in sync with
+// the copy in packages/adapters-d1/src/adapters.test.ts.
+function splitSqlStatements(migration: string): string[] {
+  const statements: string[] = [];
+  let pending = '';
+  let trigger = false;
+  for (const rawLine of migration.split(/\r?\n/u)) {
+    const line = rawLine.replace(/--.*$/u, '').trim();
+    if (!line) continue;
+    if (!pending) trigger = line.startsWith('CREATE TRIGGER');
+    pending += `${line}\n`;
+    if (
+      (!trigger && line.endsWith(';')) ||
+      (trigger && line.endsWith('END;'))
+    ) {
+      statements.push(pending.trim());
+      pending = '';
+      trigger = false;
     }
-    for (const statement of statements) await database.prepare(statement).run();
+  }
+  return statements;
+}
+
+async function applyMigrations(database: D1Database): Promise<void> {
+  // Derived from the migrations directory rather than a hardcoded list, so a
+  // newly added migration is applied in tests without editing this file.
+  const dir = new URL(
+    '../../packages/adapters-d1/migrations/',
+    import.meta.url,
+  );
+  const files = (await readdir(dir))
+    .filter((name) => name.endsWith('.sql'))
+    .sort();
+  for (const file of files) {
+    const migration = await readFile(new URL(file, dir), 'utf8');
+    for (const statement of splitSqlStatements(migration))
+      await database.prepare(statement).run();
   }
 }
 

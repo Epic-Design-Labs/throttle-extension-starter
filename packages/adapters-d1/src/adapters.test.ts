@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
@@ -32,18 +32,21 @@ const executionActivity = (
   createdAt: '2026-07-19T10:00:00.000Z',
 });
 
+// Strips `--` line comments (so a `;` inside a comment can't prematurely end
+// a statement) and keeps multi-line CREATE TRIGGER ... END; blocks intact.
+// Kept in sync with the copy in tests/helpers/test-system.ts.
 const applyMigration = async (database: D1Database, migration: string) => {
   const statements: string[] = [];
   let pending = '';
   let trigger = false;
-  for (const line of migration.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    if (pending.length === 0) trigger = trimmed.startsWith('CREATE TRIGGER');
-    pending += `${trimmed}\n`;
+  for (const rawLine of migration.split(/\r?\n/u)) {
+    const line = rawLine.replace(/--.*$/u, '').trim();
+    if (line.length === 0) continue;
+    if (pending.length === 0) trigger = line.startsWith('CREATE TRIGGER');
+    pending += `${line}\n`;
     if (
-      (!trigger && trimmed.endsWith(';')) ||
-      (trigger && trimmed.endsWith('END;'))
+      (!trigger && line.endsWith(';')) ||
+      (trigger && line.endsWith('END;'))
     ) {
       statements.push(pending.trim());
       pending = '';
@@ -64,21 +67,15 @@ beforeAll(async () => {
     d1Databases: { DB: `db-${crypto.randomUUID()}` },
   });
   database = (await runtime.getD1Database('DB')) as D1Database;
-  const initialMigration = await readFile(
-    new URL('../migrations/0001_initial.sql', import.meta.url),
-    'utf8',
-  );
-  const configurationMigration = await readFile(
-    new URL('../migrations/0002_configurations.sql', import.meta.url),
-    'utf8',
-  );
-  const dispatchMigration = await readFile(
-    new URL('../migrations/0003_queue_dispatch.sql', import.meta.url),
-    'utf8',
-  );
-  await applyMigration(database, initialMigration);
-  await applyMigration(database, configurationMigration);
-  await applyMigration(database, dispatchMigration);
+  // Derived from the migrations directory, in filename order, so a newly
+  // added migration is applied without editing this file.
+  const dir = new URL('../migrations/', import.meta.url);
+  const files = (await readdir(dir))
+    .filter((name) => name.endsWith('.sql'))
+    .sort();
+  for (const file of files) {
+    await applyMigration(database, await readFile(new URL(file, dir), 'utf8'));
+  }
 });
 
 runPersistenceAdapterContract({
