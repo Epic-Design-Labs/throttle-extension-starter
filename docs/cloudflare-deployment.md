@@ -78,6 +78,12 @@ pnpm --filter @starter/cloudflare exec wrangler secret put ENCRYPTION_KEY
 pnpm --filter @starter/cloudflare exec wrangler secret put ENCRYPTION_KEYRING
 ```
 
+> **Store the `ENCRYPTION_KEY` value somewhere you can retrieve it** (a secrets
+> manager) as you set it. Worker secrets are write-only — you can never read
+> the value back — and [key rotation](operations.md#key-rotation) requires the
+> current key's value. Skip this and rotation becomes impossible for the life
+> of the deployment.
+
 - `ENCRYPTION_KEY` must be a distinct 32-byte key, base64url-encoded (see
   `apps/cloudflare/.dev.vars.example` for the local equivalent format).
   Generate one with:
