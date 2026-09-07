@@ -15,6 +15,13 @@ export interface CloudflareQueueMessage {
 
 export interface CloudflareQueueMessageBatch {
   messages: readonly CloudflareQueueMessage[];
+  /**
+   * Name of the queue this batch came from. Cloudflare sets it on every batch;
+   * it is what lets a single queue() handler tell the connector queue apart
+   * from the dead-letter queue (see createQueueRouter). Optional so unit
+   * harnesses that exercise a consumer directly need not supply it.
+   */
+  queue?: string;
 }
 
 export interface ConnectorQueueConsumerDependencies {
