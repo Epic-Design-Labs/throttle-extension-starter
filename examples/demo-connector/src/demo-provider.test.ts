@@ -34,6 +34,7 @@ describe('fictional demo provider', () => {
     });
     await provider.handleEvent({
       event,
+      installationId: 'installation-1',
       idempotencyKey: 'event-1',
       credentials: new TextEncoder().encode('demo-valid'),
       configuration: { mode: 'normal' },
@@ -51,6 +52,7 @@ describe('fictional demo provider', () => {
     });
     const input = {
       event,
+      installationId: 'installation-1',
       idempotencyKey: 'stable-key',
       credentials: new TextEncoder().encode('demo-valid'),
       configuration: { mode: 'normal' },
@@ -66,6 +68,7 @@ describe('fictional demo provider', () => {
       await expect(
         provider.handleEvent({
           event,
+          installationId: 'installation-1',
           idempotencyKey: 'event-1',
           credentials: new TextEncoder().encode('demo-valid'),
           configuration: { mode },
@@ -80,6 +83,7 @@ describe('fictional demo provider', () => {
       await expect(
         provider.handleEvent({
           event,
+          installationId: 'installation-1',
           idempotencyKey: 'event-1',
           credentials: new TextEncoder().encode('demo-valid'),
           configuration: { mode },
@@ -98,6 +102,7 @@ describe('fictional demo provider', () => {
     });
     await provider.handleEvent({
       event,
+      installationId: 'installation-1',
       idempotencyKey: 'event-1',
       credentials: new TextEncoder().encode('demo-valid'),
       configuration: { mode: 'pagination', pages: 3 },

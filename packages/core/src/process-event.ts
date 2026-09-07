@@ -170,6 +170,7 @@ export async function processConnectorEvent(
   try {
     await dependencies.connector.handleEvent({
       event: job.event,
+      installationId: job.installationId,
       idempotencyKey: connectorIdempotencyKey(job.installationId, job.event.id),
       credentials: credential,
       configuration,
@@ -216,7 +217,12 @@ export async function processConnectorEvent(
     if (error.classification === 'retryable' && attempt < MAX_JOB_ATTEMPTS)
       return finish(job, attempt, dependencies, claim.token, {
         status: 'retry',
-        delaySeconds: retryDelaySeconds(attempt),
+        delaySeconds: retryDelaySeconds(
+          attempt,
+          error instanceof RetryableProviderError
+            ? error.retryAfterSeconds
+            : undefined,
+        ),
         code,
       });
     return finish(job, attempt, dependencies, claim.token, {

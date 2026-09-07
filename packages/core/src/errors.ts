@@ -67,12 +67,24 @@ export class ConfigurationError extends CoreError {
   }
 }
 
+export interface RetryableProviderErrorOptions extends CoreErrorOptions {
+  /**
+   * Provider-supplied hint, in seconds, for how long to wait before retrying
+   * (e.g. from a 429's Retry-After header). Honored by retryDelaySeconds in
+   * place of exponential backoff, still bounded by the retry-delay cap.
+   */
+  retryAfterSeconds?: number;
+}
+
 export class RetryableProviderError extends CoreError {
   readonly code = 'retryableProviderError';
   readonly classification = 'retryable';
+  readonly retryAfterSeconds?: number;
 
-  constructor(options?: CoreErrorOptions) {
+  constructor(options?: RetryableProviderErrorOptions) {
     super('The provider is temporarily unavailable.', options);
+    if (options?.retryAfterSeconds !== undefined)
+      this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 
