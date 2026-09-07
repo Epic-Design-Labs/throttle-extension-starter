@@ -189,14 +189,16 @@ describe('verify-release fixture happy path', () => {
 });
 
 describe('verify-release against the real repository root', () => {
-  it('passes and warns only about publisher-supplied Cloudflare IDs and repository URL', () => {
+  it('passes and warns only about publisher-supplied Cloudflare IDs', () => {
     const result = run(repositoryRoot);
 
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain('Errors (');
     expect(result.stdout).toMatch(/placeholder identifiers/u);
     expect(result.stdout).toMatch(/all-zero database_id/u);
-    expect(result.stdout).toMatch(/<this-repository-url>/u);
+    // The README carries a real clone URL, so the <this-repository-url>
+    // placeholder warning must NOT fire here.
+    expect(result.stdout).not.toMatch(/<this-repository-url>/u);
   });
 });
 
