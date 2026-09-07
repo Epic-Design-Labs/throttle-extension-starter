@@ -53,8 +53,27 @@ describe('provider retry policy', () => {
   );
 
   it('uses bounded exponential backoff', () => {
-    expect([1, 2, 3, 10].map(retryDelaySeconds)).toEqual([5, 25, 125, 900]);
+    // Wrap so Array.map's index/array args aren't passed as retryAfterSeconds.
+    expect([1, 2, 3, 10].map((attempt) => retryDelaySeconds(attempt))).toEqual([
+      5, 25, 125, 900,
+    ]);
   });
+
+  it('honors a provider retry-after hint in place of backoff, capped', () => {
+    expect(retryDelaySeconds(1, 42)).toBe(42);
+    expect(retryDelaySeconds(3, 0)).toBe(0);
+    expect(retryDelaySeconds(1, 1.2)).toBe(2); // fractional seconds round up
+    expect(retryDelaySeconds(1, 10_000)).toBe(900); // clamped to the cap
+  });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects an invalid retry-after hint %s',
+    (retryAfterSeconds) => {
+      expect(() => retryDelaySeconds(1, retryAfterSeconds)).toThrow(
+        ValidationError,
+      );
+    },
+  );
 
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects invalid attempt %s',

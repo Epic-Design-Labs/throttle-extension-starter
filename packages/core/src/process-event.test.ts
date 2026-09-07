@@ -108,7 +108,10 @@ describe('processConnectorEvent', () => {
     });
     expect(f.deps.connector.handleEvent).toHaveBeenCalledOnce();
     expect(f.deps.connector.handleEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey: '["i","evt"]' }),
+      expect.objectContaining({
+        installationId: 'i',
+        idempotencyKey: '["i","evt"]',
+      }),
     );
     expect(f.deps.executions.finish).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -335,6 +338,23 @@ describe('processConnectorEvent', () => {
       );
     },
   );
+  test('honors a retryable provider error retry-after hint over backoff', async () => {
+    const f = setup(
+      vi.fn(async () => {
+        throw new RetryableProviderError({ retryAfterSeconds: 120 });
+      }),
+    );
+    (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'claimed',
+      token: 'claim-token',
+      attempt: 1,
+    });
+    expect(await processConnectorEvent(job, f.deps)).toEqual({
+      status: 'retry',
+      delaySeconds: 120, // the hint, not the attempt-1 backoff of 5
+      code: 'RETRYABLE_PROVIDER_ERROR',
+    });
+  });
   test('maps terminal provider errors without exposing their causes', async () => {
     const f = setup(
       vi.fn(async () => {
