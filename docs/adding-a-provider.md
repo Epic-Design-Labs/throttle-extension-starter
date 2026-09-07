@@ -43,12 +43,20 @@ without a real external dependency:
     `behavior.onPage(page)` hook once per page before succeeding, so tests
     can assert pagination was walked correctly.
   - Anything else (including `{}`) → succeeds.
-- For an `order.created` event, on success it calls
-  `sink.recordOrderCreated(orderId, idempotencyKey)` **at most once per
-  idempotency key** — the in-memory `completedKeys` set is exactly the kind
-  of "dedupe by idempotency key" behavior your real provider integration
-  must also implement, since `processConnectorEvent` may call `handleEvent`
-  again for the same event on infrastructure-level retries.
+- For an `order.created` event, on success it **translates** the Throttle
+  order into the demo provider's own shape (`id` → `referenceCode`,
+  `shippingAddress.line1` → `addressLine1`, `shippingAddress.state` →
+  `stateProvince`) and calls `sink.recordShipment(shipment, idempotencyKey)`
+  **at most once per idempotency key**. Two things to copy here:
+  - The demo's field names are deliberately **unlike** Throttle's. Real
+    providers rarely share Throttle's field names, and writing your mapper
+    with identical names on both sides is a bug that passes every test written
+    against your own fixtures and then fails on live data — so make your test
+    fixtures use the provider's real spellings, not Throttle's.
+  - The in-memory `completedKeys` set is the "dedupe by idempotency key"
+    behavior your integration must also implement, since
+    `processConnectorEvent` may call `handleEvent` again for the same event on
+    infrastructure-level retries.
 
 ## Replacing it with your integration
 
