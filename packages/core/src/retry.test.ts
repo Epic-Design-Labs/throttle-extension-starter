@@ -59,19 +59,38 @@ describe('provider retry policy', () => {
     ]);
   });
 
-  it('honors a provider retry-after hint in place of backoff, capped', () => {
+  /**
+   * `Retry-After` is a floor, not a schedule. RFC 9110 defines it as the
+   * minimum wait, so honoring it can only push a retry later — never sooner
+   * than the backoff would have gone on its own. That asymmetry is the whole
+   * safety argument: a provider cannot use the header to talk us into
+   * hammering it, and cannot be hammered by us ignoring it.
+   */
+  it('waits at least as long as the provider asked', () => {
     expect(retryDelaySeconds(1, 42)).toBe(42);
-    expect(retryDelaySeconds(3, 0)).toBe(0);
-    expect(retryDelaySeconds(1, 1.2)).toBe(2); // fractional seconds round up
-    expect(retryDelaySeconds(1, 10_000)).toBe(900); // clamped to the cap
+    expect(retryDelaySeconds(1, 1.2)).toBe(5); // rounds up, still under backoff
+    expect(retryDelaySeconds(1, 6.2)).toBe(7); // fractional seconds round up
   });
 
-  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
-    'rejects an invalid retry-after hint %s',
+  it('keeps its own backoff when the provider asks for less', () => {
+    // Without this a provider answering every 429 with `Retry-After: 1` burns
+    // all five attempts in about four seconds.
+    expect(retryDelaySeconds(3, 2)).toBe(125);
+    expect(retryDelaySeconds(4, 1)).toBe(625);
+  });
+
+  it('never parks a job past the bound, however long the provider asks', () => {
+    expect(retryDelaySeconds(1, 10_000)).toBe(900);
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'falls back to backoff for an unusable hint %s',
     (retryAfterSeconds) => {
-      expect(() => retryDelaySeconds(1, retryAfterSeconds)).toThrow(
-        ValidationError,
-      );
+      // Deliberately not a throw. The only call site is inside
+      // processConnectorEvent's catch block, so a throw would escape the
+      // function and reach the queue consumer as an unhandled error — on
+      // nothing worse than a malformed response header.
+      expect(retryDelaySeconds(2, retryAfterSeconds)).toBe(25);
     },
   );
 

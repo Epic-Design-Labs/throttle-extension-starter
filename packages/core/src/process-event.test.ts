@@ -338,10 +338,42 @@ describe('processConnectorEvent', () => {
       );
     },
   );
-  test('honors a retryable provider error retry-after hint over backoff', async () => {
+  test.each([
+    // Longer than attempt 1's 5s backoff, so the provider's floor decides.
+    [1, 120, 120],
+    // Shorter than attempt 4's 625s backoff, so the backoff still decides.
+    // Honoring the hint here instead would burn every remaining attempt in
+    // seconds against a provider that keeps saying "1".
+    [4, 1, 625],
+  ])(
+    'on attempt %i with a %is retry-after hint, waits %is',
+    async (attempt, retryAfterSeconds, delaySeconds) => {
+      const f = setup(
+        vi.fn(async () => {
+          throw new RetryableProviderError({ retryAfterSeconds });
+        }),
+      );
+      (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: 'claimed',
+        token: 'claim-token',
+        attempt,
+      });
+      expect(await processConnectorEvent(job, f.deps)).toEqual({
+        status: 'retry',
+        delaySeconds,
+        code: 'RETRYABLE_PROVIDER_ERROR',
+      });
+    },
+  );
+
+  test('survives a provider hint that is not a usable number', async () => {
     const f = setup(
       vi.fn(async () => {
-        throw new RetryableProviderError({ retryAfterSeconds: 120 });
+        // Cast because the field is typed: the point is that an adapter
+        // parsing a malformed header cannot take the whole retry down.
+        throw new RetryableProviderError({
+          retryAfterSeconds: 'soon' as unknown as number,
+        });
       }),
     );
     (f.deps.executions.claim as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -351,7 +383,7 @@ describe('processConnectorEvent', () => {
     });
     expect(await processConnectorEvent(job, f.deps)).toEqual({
       status: 'retry',
-      delaySeconds: 120, // the hint, not the attempt-1 backoff of 5
+      delaySeconds: 5,
       code: 'RETRYABLE_PROVIDER_ERROR',
     });
   });
