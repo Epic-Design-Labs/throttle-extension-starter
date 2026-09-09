@@ -243,6 +243,27 @@ it('returns a trusted event and matched installation only after header checks', 
   ).resolves.toBeNull();
 });
 
+it('accepts a correctly signed body that carries an envelope field this build does not know', async () => {
+  // Regression: the 2026-09-08 outage. Throttle began sending
+  // `environmentKind`; the HMAC matched, the strict envelope parse threw, and
+  // the route reported the parse failure as WEBHOOK_VERIFICATION_FAILED.
+  const body =
+    '{"id":"evt_1","type":"deployment.created","version":"1","createdAt":"2026-01-01T00:00:00.000Z","environmentId":"env_1","environmentKind":"non_production","futureField":true,"workspaceId":"ws_1","data":{}}';
+  await expect(
+    verifyThrottleWebhook({
+      rawBody: body,
+      signature: await signBody(body),
+      eventId: 'evt_1',
+      eventType: 'deployment.created',
+      candidates: [{ installationId: 'inst_1', signingSecret: secretBytes() }],
+      now: timestamp,
+    }),
+  ).resolves.toMatchObject({
+    installationId: 'inst_1',
+    event: { id: 'evt_1', environmentKind: 'non_production' },
+  });
+});
+
 it('rejects an oversized body even when its signature and schema are valid', async () => {
   const body = JSON.stringify({
     id: 'evt_big',

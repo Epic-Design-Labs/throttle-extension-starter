@@ -116,10 +116,24 @@ describe('Throttle event contract', () => {
     expect(throttleEventSchema.parse(event)).toEqual(event);
   });
 
-  it('rejects unknown envelope keys', () => {
-    expect(() =>
+  it('strips unknown envelope keys instead of rejecting the delivery', () => {
+    // Throttle adds envelope fields without a version bump. A strict parse
+    // here rejected every delivery for hours when `environmentKind` shipped.
+    expect(
       throttleEventSchema.parse({ ...event, applicationId: 'app_1' }),
-    ).toThrow();
+    ).toEqual(event);
+  });
+
+  it('types environmentKind and treats an unknown value as absent', () => {
+    expect(
+      throttleEventSchema.parse({
+        ...event,
+        environmentKind: 'non_production',
+      }),
+    ).toEqual({ ...event, environmentKind: 'non_production' });
+    expect(
+      throttleEventSchema.parse({ ...event, environmentKind: 'staging' }),
+    ).toEqual(event);
   });
 
   it('requires the payload-schema version field', () => {
