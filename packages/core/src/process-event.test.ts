@@ -476,4 +476,71 @@ describe('processConnectorEvent', () => {
     await processConnectorEvent(job, f.deps);
     expect(f.activities).toHaveLength(1);
   });
+
+  describe('extension.uninstalled', () => {
+    const uninstall: ConnectorJob = {
+      ...job,
+      jobId: 'j-uninstall',
+      event: {
+        ...job.event,
+        id: 'evt-uninstall',
+        type: 'extension.uninstalled',
+        data: {
+          installationId: 'i',
+          extensionId: 'x',
+          applicationId: 'a',
+          uninstalledAt: '2026-09-09T14:02:11.790Z',
+          reason: 'merchant',
+        },
+      },
+    };
+
+    test('marks the installation uninstalled with the platform timestamp and never calls the connector', async () => {
+      const f = setup();
+      expect(await processConnectorEvent(uninstall, f.deps)).toEqual({
+        status: 'success',
+      });
+      expect(f.deps.installations.markUninstalled).toHaveBeenCalledWith(
+        'i',
+        { workspaceId: 'w', applicationId: 'a', environmentId: 'e' },
+        new Date('2026-09-09T14:02:11.790Z'),
+      );
+      expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+      expect(f.deps.credentials.get).not.toHaveBeenCalled();
+    });
+
+    test('cleans up a disconnected installation too', async () => {
+      const f = setup();
+      f.setInstallation({ ...install, status: 'disconnected' });
+      expect(await processConnectorEvent(uninstall, f.deps)).toEqual({
+        status: 'success',
+      });
+      expect(f.deps.installations.markUninstalled).toHaveBeenCalledOnce();
+    });
+
+    test('refuses when the payload names a different installation', async () => {
+      const f = setup();
+      const other = {
+        ...uninstall,
+        event: {
+          ...uninstall.event,
+          data: { ...uninstall.event.data, installationId: 'someone-else' },
+        },
+      };
+      expect(await processConnectorEvent(other, f.deps)).toEqual({
+        status: 'terminal',
+        code: 'INSTALLATION_SCOPE_MISMATCH',
+      });
+      expect(f.deps.installations.markUninstalled).not.toHaveBeenCalled();
+    });
+
+    test('is still not found when the installation does not exist', async () => {
+      const f = setup();
+      f.setInstallation(undefined);
+      expect(await processConnectorEvent(uninstall, f.deps)).toEqual({
+        status: 'terminal',
+        code: 'INSTALLATION_NOT_FOUND',
+      });
+    });
+  });
 });

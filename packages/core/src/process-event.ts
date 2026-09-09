@@ -117,6 +117,38 @@ async function finish(
   return result;
 }
 
+async function handleUninstalled(
+  job: ConnectorJob,
+  installation: Installation,
+  dependencies: ProcessConnectorEventDependencies,
+): Promise<ProcessConnectorEventResult> {
+  // Match on the id in the payload, not on the envelope: a workspace can hold
+  // several installations of the same extension, one per application.
+  if (
+    job.event.data['installationId'] !== job.installationId ||
+    installation.workspaceId !== job.event.workspaceId ||
+    installation.environmentId !== job.event.environmentId
+  )
+    return { status: 'terminal', code: 'INSTALLATION_SCOPE_MISMATCH' };
+  const reported = new Date(String(job.event.data['uninstalledAt'] ?? ''));
+  await dependencies.installations.markUninstalled(
+    job.installationId,
+    {
+      workspaceId: installation.workspaceId,
+      applicationId: installation.applicationId,
+      environmentId: installation.environmentId,
+    },
+    Number.isNaN(reported.valueOf()) ? dependencies.clock.now() : reported,
+  );
+  dependencies.logger.info('Installation uninstalled by Throttle', {
+    installationId: job.installationId,
+    eventId: job.event.id,
+    jobId: job.jobId,
+    reason: String(job.event.data['reason'] ?? 'unknown'),
+  });
+  return { status: 'success' };
+}
+
 /** Processes only jobs accepted by the authenticated internal enqueue path. */
 export async function processConnectorEvent(
   job: ConnectorJob,
@@ -144,6 +176,19 @@ export async function processConnectorEvent(
   const installation = await dependencies.installations.getForJob(
     job.installationId,
   );
+  // Throttle's signal that this installation is over, sent after the platform
+  // row already reads `uninstalled` and aimed at this installation's own
+  // endpoint. Handled ahead of the active/configuration/credential gates on
+  // purpose: a pending or disconnected install must still be cleaned up, and
+  // the point is to delete the credential, not to need one.
+  if (installation && job.event.type === 'extension.uninstalled')
+    return finish(
+      job,
+      attempt,
+      dependencies,
+      claim.token,
+      await handleUninstalled(job, installation, dependencies),
+    );
   const invalid = scopeCode(installation, job);
   if (invalid)
     return finish(job, attempt, dependencies, claim.token, {
