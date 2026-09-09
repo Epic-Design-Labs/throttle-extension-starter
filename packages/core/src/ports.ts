@@ -105,6 +105,24 @@ export interface ProviderConnectionStore {
 export type CredentialKind =
   'throttleApiKey' | 'webhookSigningSecret' | 'providerCredentials';
 
+/**
+ * The narrow slice of Throttle's control plane the worker calls back into.
+ * Today: reading the installation's current webhook signing secret after
+ * Throttle says it was rotated. Implemented over HTTP in `@starter/throttle`.
+ */
+export interface ThrottleControlPlane {
+  /**
+   * `GET /api/v1/installations/:id/webhook-secret`, authenticated as the
+   * installation. Resolves `undefined` when Throttle answers that there is no
+   * secret to read (404/409); rejects on transport or server errors so the
+   * caller can retry.
+   */
+  fetchWebhookSigningSecret(input: {
+    installationId: string;
+    apiKey: Uint8Array;
+  }): Promise<Uint8Array | undefined>;
+}
+
 export interface DeliveryStore {
   accept(input: {
     installationId: string;

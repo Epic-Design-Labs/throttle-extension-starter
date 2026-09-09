@@ -118,6 +118,26 @@ candidates in a single header, Throttle-side signing-secret rotation can
 roll forward without a verification gap as long as Throttle sends both the
 old and new signatures during its own rotation window.
 
+Throttle does exactly that since 2026-09-10: after
+`POST /api/v1/installations/:id/rotate-webhook-secret` (or a merchant
+rotating from the dashboard) every delivery carries
+`t=…,v1=<outgoing>,v1=<new>` for 24 hours by default, and the endpoint
+receives a signed `extension.webhook_secret_rotated` event carrying
+`previousSecretExpiresAt` — never the secret. `processConnectorEvent`
+handles it ahead of the connector: it reads the stored `throttleApiKey`,
+calls `GET /api/v1/installations/:id/webhook-secret` through the
+`ThrottleControlPlane` port (`createThrottleControlPlane` in
+`@starter/throttle`, wired in the composition root from the JWKS URL's
+origin), and stores the result as `webhookSigningSecret`. A failed read
+retries on the normal ladder; without the port wired the event is recorded
+as `SECRET_REFRESH_UNAVAILABLE` and the stored secret goes stale when the
+window closes.
+
+Throttle also probes every active endpoint with a signed `extension.ping`
+two minutes after each platform deploy and every six hours;
+`processConnectorEvent` acknowledges it before any installation lookup.
+It appears in the `deliveries` table like any event.
+
 ## Incident response
 
 If you suspect a credential or signing secret has been compromised:

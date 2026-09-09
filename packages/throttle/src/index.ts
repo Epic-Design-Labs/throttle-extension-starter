@@ -7,3 +7,4 @@ export {
 export type { UntrustedWebhookRoutingHint } from './events.js';
 export * from './identity.js';
 export * from './webhooks.js';
+export * from './control-plane.js';

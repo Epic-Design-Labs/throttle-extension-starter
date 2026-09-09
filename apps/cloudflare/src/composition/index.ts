@@ -24,6 +24,7 @@ import { redact } from '@starter/security';
 import {
   createExtensionIdentityVerifier,
   type ExtensionIdentityVerifier,
+  createThrottleControlPlane,
 } from '@starter/throttle';
 import { createApp } from '../app.js';
 import type { Env } from '../env.js';
@@ -221,6 +222,11 @@ export function composeWorker(
         connector,
         clock,
         logger: safeLogger,
+        // Fetches the new signing secret when Throttle reports a rotation.
+        // The API lives at the JWKS URL's origin; no extra configuration.
+        throttle: createThrottleControlPlane({
+          apiOrigin: new URL(env.jwksUrl).origin,
+        }),
       }),
     logger: safeLogger,
     recordFailure: createActivityStoreQueueFailureRecorder({
