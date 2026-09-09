@@ -34,6 +34,7 @@ export type {
   ConfigurationStore,
   CredentialStore,
   CredentialKind,
+  ThrottleControlPlane,
   DeliveryStore,
   InstallationStore,
   JobClaimResult,

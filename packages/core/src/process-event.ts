@@ -16,6 +16,7 @@ import type {
   InstallationStore,
   JobExecutionStore,
   Logger,
+  ThrottleControlPlane,
 } from './ports.js';
 import { MAX_JOB_ATTEMPTS, retryDelaySeconds } from './retry.js';
 
@@ -32,6 +33,12 @@ export interface ProcessConnectorEventDependencies {
   connector: ProviderConnector;
   clock: Clock;
   logger: Logger;
+  /**
+   * Optional: without it, `extension.webhook_secret_rotated` is logged and
+   * dropped — the endpoint keeps verifying until the grace window closes and
+   * then rejects every delivery until someone updates the stored secret.
+   */
+  throttle?: ThrottleControlPlane;
 }
 function scopeCode(
   installation: Installation | undefined,
@@ -149,6 +156,79 @@ async function handleUninstalled(
   return { status: 'success' };
 }
 
+/**
+ * Throttle rotated this installation's webhook signing secret and is telling
+ * us — the event is signed with BOTH the outgoing and the new secret, which is
+ * why it verified with the one we still hold. Fetch the new secret with the
+ * installation's own API key and store it before `previousSecretExpiresAt`.
+ * The event never carries the secret itself.
+ */
+async function handleWebhookSecretRotated(
+  job: ConnectorJob,
+  installation: Installation,
+  attempt: number,
+  dependencies: ProcessConnectorEventDependencies,
+): Promise<ProcessConnectorEventResult> {
+  if (
+    job.event.data['installationId'] !== job.installationId ||
+    installation.workspaceId !== job.event.workspaceId ||
+    installation.environmentId !== job.event.environmentId
+  )
+    return { status: 'terminal', code: 'INSTALLATION_SCOPE_MISMATCH' };
+  if (!dependencies.throttle) {
+    dependencies.logger.warn(
+      'Webhook secret rotated but no Throttle control plane is configured; stored secret NOT refreshed',
+      { installationId: job.installationId, eventId: job.event.id },
+    );
+    return { status: 'terminal', code: 'SECRET_REFRESH_UNAVAILABLE' };
+  }
+  const apiKey = await dependencies.credentials.get(
+    job.installationId,
+    'throttleApiKey',
+  );
+  if (!apiKey) return { status: 'terminal', code: 'CREDENTIAL_MISSING' };
+  let secret: Uint8Array | undefined;
+  try {
+    secret = await dependencies.throttle.fetchWebhookSigningSecret({
+      installationId: job.installationId,
+      apiKey,
+    });
+  } catch (cause) {
+    dependencies.logger.warn('Webhook secret refresh failed; will retry', {
+      installationId: job.installationId,
+      eventId: job.event.id,
+      error: cause instanceof Error ? cause.message : String(cause),
+    });
+    if (attempt < MAX_JOB_ATTEMPTS)
+      return {
+        status: 'retry',
+        code: 'SECRET_REFRESH_FAILED',
+        delaySeconds: retryDelaySeconds(attempt),
+      };
+    return { status: 'terminal', code: 'ATTEMPTS_EXHAUSTED' };
+  } finally {
+    apiKey.fill(0);
+  }
+  if (!secret) return { status: 'terminal', code: 'SECRET_UNAVAILABLE' };
+  try {
+    await dependencies.credentials.set(
+      job.installationId,
+      'webhookSigningSecret',
+      secret,
+    );
+  } finally {
+    secret.fill(0);
+  }
+  dependencies.logger.info('Webhook signing secret refreshed after rotation', {
+    installationId: job.installationId,
+    eventId: job.event.id,
+    previousSecretExpiresAt: String(
+      job.event.data['previousSecretExpiresAt'] ?? 'revoked',
+    ),
+  });
+  return { status: 'success' };
+}
+
 /** Processes only jobs accepted by the authenticated internal enqueue path. */
 export async function processConnectorEvent(
   job: ConnectorJob,
@@ -173,9 +253,29 @@ export async function processConnectorEvent(
       status: 'terminal',
       code: 'ATTEMPTS_EXHAUSTED',
     });
+  // Throttle's signed reachability probe: sent after every platform deploy
+  // and every six hours, verified like any delivery (it reached here, so the
+  // signature matched). Nothing to process; answering success is the point.
+  if (job.event.type === 'extension.ping')
+    return finish(job, attempt, dependencies, claim.token, {
+      status: 'success',
+    });
   const installation = await dependencies.installations.getForJob(
     job.installationId,
   );
+  if (installation && job.event.type === 'extension.webhook_secret_rotated')
+    return finish(
+      job,
+      attempt,
+      dependencies,
+      claim.token,
+      await handleWebhookSecretRotated(
+        job,
+        installation,
+        attempt,
+        dependencies,
+      ),
+    );
   // Throttle's signal that this installation is over, sent after the platform
   // row already reads `uninstalled` and aimed at this installation's own
   // endpoint. Handled ahead of the active/configuration/credential gates on

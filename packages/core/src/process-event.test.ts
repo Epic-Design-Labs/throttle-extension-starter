@@ -477,6 +477,119 @@ describe('processConnectorEvent', () => {
     expect(f.activities).toHaveLength(1);
   });
 
+  describe('extension.ping', () => {
+    test('is acknowledged without touching the installation, credentials or connector', async () => {
+      const f = setup();
+      const ping: ConnectorJob = {
+        ...job,
+        jobId: 'j-ping',
+        event: {
+          ...job.event,
+          id: 'evt-ping',
+          type: 'extension.ping',
+          data: {},
+        },
+      };
+      expect(await processConnectorEvent(ping, f.deps)).toEqual({
+        status: 'success',
+      });
+      expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+      expect(f.deps.credentials.get).not.toHaveBeenCalled();
+      expect(f.deps.installations.getForJob).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('extension.webhook_secret_rotated', () => {
+    const rotated: ConnectorJob = {
+      ...job,
+      jobId: 'j-rotated',
+      event: {
+        ...job.event,
+        id: 'evt-rotated',
+        type: 'extension.webhook_secret_rotated',
+        data: {
+          installationId: 'i',
+          extensionId: 'x',
+          endpointId: 'wep-1',
+          rotatedAt: '2026-09-10T09:15:02.101Z',
+          previousSecretExpiresAt: '2026-09-11T09:15:02.101Z',
+        },
+      },
+    };
+    const withThrottle = (
+      f: ReturnType<typeof setup>,
+      fetchSecret = vi.fn<
+        (input: {
+          installationId: string;
+          apiKey: Uint8Array;
+        }) => Promise<Uint8Array | undefined>
+      >(async () => new TextEncoder().encode('whsec_new')),
+    ) => {
+      f.deps.throttle = { fetchWebhookSigningSecret: fetchSecret };
+      return fetchSecret;
+    };
+
+    test('fetches the new secret with the installation API key and stores it, never calling the connector', async () => {
+      const f = setup();
+      const fetchSecret = withThrottle(f);
+      expect(await processConnectorEvent(rotated, f.deps)).toEqual({
+        status: 'success',
+      });
+      expect(f.deps.credentials.get).toHaveBeenCalledWith(
+        'i',
+        'throttleApiKey',
+      );
+      expect(fetchSecret).toHaveBeenCalledOnce();
+      expect(fetchSecret.mock.calls[0]?.[0]?.installationId).toBe('i');
+      const setCall = vi.mocked(f.deps.credentials.set).mock.calls[0];
+      expect(setCall?.[0]).toBe('i');
+      expect(setCall?.[1]).toBe('webhookSigningSecret');
+      // The caller-owned buffer is wiped after the store copied it.
+      expect(Array.from(setCall?.[2] ?? [1]).every((b) => b === 0)).toBe(true);
+      expect(f.deps.connector.handleEvent).not.toHaveBeenCalled();
+    });
+
+    test('is terminal, not a crash, when no control plane is configured', async () => {
+      const f = setup();
+      expect(await processConnectorEvent(rotated, f.deps)).toEqual({
+        status: 'terminal',
+        code: 'SECRET_REFRESH_UNAVAILABLE',
+      });
+      expect(f.deps.credentials.set).not.toHaveBeenCalled();
+    });
+
+    test('retries when the read fails, and stops after the attempt budget', async () => {
+      const f = setup();
+      withThrottle(
+        f,
+        vi.fn(async () => {
+          throw new Error('502');
+        }),
+      );
+      const r = await processConnectorEvent(rotated, f.deps);
+      expect(r.status).toBe('retry');
+      expect((r as { code: string }).code).toBe('SECRET_REFRESH_FAILED');
+      expect(f.deps.credentials.set).not.toHaveBeenCalled();
+    });
+
+    test('refuses when the payload names a different installation', async () => {
+      const f = setup();
+      const fetchSecret = withThrottle(f);
+      const other = {
+        ...rotated,
+        event: {
+          ...rotated.event,
+          data: { ...rotated.event.data, installationId: 'someone-else' },
+        },
+      };
+      expect(await processConnectorEvent(other, f.deps)).toEqual({
+        status: 'terminal',
+        code: 'INSTALLATION_SCOPE_MISMATCH',
+      });
+      expect(fetchSecret).not.toHaveBeenCalled();
+    });
+  });
+
   describe('extension.uninstalled', () => {
     const uninstall: ConnectorJob = {
       ...job,
