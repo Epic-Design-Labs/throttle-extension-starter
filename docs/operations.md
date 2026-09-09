@@ -8,6 +8,24 @@ together.
 
 ## Uninstall / data deletion
 
+`markUninstalled` is reached two ways, and both must work:
+
+- **From Throttle.** Uninstalling in the Throttle dashboard or API sends one
+  signed `extension.uninstalled` delivery to this installation's webhook URL,
+  after the platform row already reads `uninstalled`. It needs no
+  subscription, scope, or API key. `processConnectorEvent`
+  (`packages/core/src/process-event.ts`) handles it ahead of the
+  active/configuration/credential gates — a `pending` or `disconnected`
+  install is cleaned up too — checks that `data.installationId` is the job's
+  own installation, and calls `markUninstalled` with the platform's
+  `uninstalledAt`. The connector never sees this event.
+- **From the extension's own panel.** `DELETE /api/connector` calls the same
+  function for a merchant who disconnects from inside the app.
+
+Installations uninstalled before Throttle sent this delivery (2026-09-09)
+were never told; reconcile them once against
+`GET /api/v1/extension-installations` if you hold provider credentials.
+
 When an installation is uninstalled, `markUninstalled`
 (`packages/adapters-d1/src/installations.ts`) runs one atomic D1 batch that:
 
